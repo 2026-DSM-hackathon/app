@@ -11,6 +11,7 @@ import '../features/pairing/pairing_screen.dart';
 import '../features/profile/profile_screen.dart';
 import '../features/settings/settings_screen.dart';
 import '../features/timeline/timeline_screen.dart';
+import 'responsive.dart';
 import 'theme.dart';
 
 /// 하단 네비게이션 선택 인덱스(탭: 0 홈 · 1 타임라인 · 2 알림 · 3 프로필).
@@ -62,12 +63,24 @@ class _AppShellState extends ConsumerState<AppShell> {
 
     return Scaffold(
       extendBody: true,
-      body: IndexedStack(index: index, children: _tabs),
-      bottomNavigationBar: _BottomBar(
-        currentIndex: index,
-        unread: unread,
-        onTap: (int i) => ref.read(navIndexProvider.notifier).set(i),
-        onCenter: () => _openQuickActions(context),
+      // 기종 반응형: 넓은 화면에서는 콘텐츠/하단 바를 중앙 폭으로 제한한다.
+      body: ResponsiveCenter(
+        child: IndexedStack(index: index, children: _tabs),
+      ),
+      // 하단 바는 높이를 자식(66px)에 맞춰야 한다(heightFactor: 1).
+      // 넓은 화면에서는 가운데 정렬 + 최대폭 제한으로 반응형 처리.
+      bottomNavigationBar: Align(
+        alignment: Alignment.bottomCenter,
+        heightFactor: 1,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 640),
+          child: _BottomBar(
+            currentIndex: index,
+            unread: unread,
+            onTap: (int i) => ref.read(navIndexProvider.notifier).set(i),
+            onCenter: () => _openQuickActions(context),
+          ),
+        ),
       ),
     );
   }

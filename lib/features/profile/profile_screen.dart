@@ -10,7 +10,8 @@ import '../../widgets/status_pill.dart';
 import '../pairing/pairing_screen.dart';
 import '../settings/settings_screen.dart';
 
-/// 차종/공간 프로필(6.6, F-08). 사용자 정보·공간 유형·내 기기·설정 진입점을 보여준다.
+/// 차종/공간 프로필(6.6, F-08).
+/// 차량(제조사)과 차종 모델로 구분해 선택하고, 비차량 모드도 지원한다.
 class ProfileScreen extends ConsumerWidget {
   const ProfileScreen({super.key});
 
@@ -25,8 +26,17 @@ class ProfileScreen extends ConsumerWidget {
         padding: const EdgeInsets.fromLTRB(20, 12, 20, 120),
         children: <Widget>[
           _Header(
-            onEdit: () =>
-                _showEditModelDialog(context, ref, profile.modelName),
+            onEdit: () async {
+              final String? name = await _showTextEditDialog(
+                context,
+                title: '프로필 수정',
+                label: '이름',
+                initial: profile.userName,
+              );
+              if (name != null && name.isNotEmpty) {
+                ref.read(profileProvider.notifier).setUserName(name);
+              }
+            },
           ),
           const SizedBox(height: 20),
           _UserCard(profile: profile),
@@ -34,24 +44,35 @@ class ProfileScreen extends ConsumerWidget {
           Row(
             children: <Widget>[
               Expanded(
-                child:
-                    _InfoTile(title: '공간 유형', value: profile.spaceType.label),
+                child: _InfoTile(
+                  title: profile.isVehicleMode ? '차량(제조사)' : '공간 유형',
+                  value: profile.isVehicleMode
+                      ? profile.manufacturer
+                      : profile.spaceType.label,
+                ),
               ),
               const SizedBox(width: 12),
               Expanded(
-                child: _InfoTile(title: '차종/모델', value: profile.modelName),
+                child: _InfoTile(
+                  title: profile.isVehicleMode ? '차종 모델' : '공간 이름',
+                  value: profile.modelName,
+                ),
               ),
             ],
           ),
           const SizedBox(height: 16),
-          _SpaceTypeSelector(profile: profile, ref: ref),
+          _SpaceTypeSelector(profile: profile),
+          const SizedBox(height: 16),
+          if (profile.isVehicleMode)
+            _VehicleModelCard(profile: profile)
+          else
+            _SpaceNameCard(profile: profile),
           const SizedBox(height: 26),
           SectionHeader(
             title: '내 기기',
             trailing: GestureDetector(
               onTap: () => Navigator.of(context).push(
-                MaterialPageRoute<void>(
-                    builder: (_) => const PairingScreen()),
+                MaterialPageRoute<void>(builder: (_) => const PairingScreen()),
               ),
               child: Container(
                 width: 32,
@@ -95,14 +116,14 @@ class ProfileScreen extends ConsumerWidget {
   }
 }
 
-/// '프로필 수정' 다이얼로그: 차종/모델명을 수정해 profileProvider에 반영한다.
-Future<void> _showEditModelDialog(
-  BuildContext context,
-  WidgetRef ref,
-  String initialModel,
-) async {
-  final TextEditingController controller =
-      TextEditingController(text: initialModel);
+/// 공용 텍스트 수정 다이얼로그(이름/차종 모델/공간 이름).
+Future<String?> _showTextEditDialog(
+  BuildContext context, {
+  required String title,
+  required String label,
+  required String initial,
+}) async {
+  final TextEditingController controller = TextEditingController(text: initial);
   final String? result = await showDialog<String>(
     context: context,
     builder: (BuildContext dialogContext) {
@@ -111,9 +132,9 @@ Future<void> _showEditModelDialog(
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(AppRadii.stat),
         ),
-        title: const Text(
-          '프로필 수정',
-          style: TextStyle(
+        title: Text(
+          title,
+          style: const TextStyle(
             color: AppColors.textPrimary,
             fontWeight: FontWeight.w700,
           ),
@@ -124,7 +145,7 @@ Future<void> _showEditModelDialog(
           style: const TextStyle(color: AppColors.textPrimary),
           cursorColor: AppColors.primary,
           decoration: InputDecoration(
-            labelText: '차종/모델',
+            labelText: label,
             labelStyle: const TextStyle(color: AppColors.textSecondary),
             enabledBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(12),
@@ -160,9 +181,7 @@ Future<void> _showEditModelDialog(
     },
   );
   controller.dispose();
-  if (result != null && result.isNotEmpty) {
-    ref.read(profileProvider.notifier).setModelName(result);
-  }
+  return result;
 }
 
 class _Header extends StatelessWidget {
@@ -248,7 +267,8 @@ class _UserCard extends StatelessWidget {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  profile.email,
+                  // 로그인 미사용: 이메일 대신 상태 문구를 보여준다.
+                  profile.email.isEmpty ? '로그인 없이 사용 중' : profile.email,
                   style: const TextStyle(
                     color: AppColors.textSecondary,
                     fontSize: 13,
@@ -310,13 +330,12 @@ class _InfoTile extends StatelessWidget {
 }
 
 /// 공간 유형 선택 칩(비차량 모드 포함, 6.6).
-class _SpaceTypeSelector extends StatelessWidget {
-  const _SpaceTypeSelector({required this.profile, required this.ref});
+class _SpaceTypeSelector extends ConsumerWidget {
+  const _SpaceTypeSelector({required this.profile});
   final SpaceProfile profile;
-  final WidgetRef ref;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     return AppCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -390,6 +409,231 @@ class _SpaceTypeSelector extends StatelessWidget {
   }
 }
 
+/// 차량 모드: 제조사(차량) → 차종 모델 2단 선택 + 직접 입력.
+class _VehicleModelCard extends ConsumerWidget {
+  const _VehicleModelCard({required this.profile});
+  final SpaceProfile profile;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final List<String> manufacturers = <String>[
+      ...kVehicleCatalog.keys,
+      kCustomManufacturer,
+    ];
+    final bool isCatalog = profile.isCatalogManufacturer;
+    final String manufacturerValue =
+        isCatalog ? profile.manufacturer : kCustomManufacturer;
+    final List<String> models =
+        isCatalog ? kVehicleCatalog[profile.manufacturer]! : const <String>[];
+
+    return AppCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          const Text(
+            '차량 · 차종 모델',
+            style: TextStyle(
+              color: AppColors.textPrimary,
+              fontSize: 14,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 12),
+          _DropdownField(
+            label: '차량(제조사)',
+            value: manufacturerValue,
+            items: manufacturers,
+            onChanged: (String? v) {
+              if (v == null) return;
+              ref.read(profileProvider.notifier).setManufacturer(v);
+            },
+          ),
+          const SizedBox(height: 12),
+          if (isCatalog)
+            _DropdownField(
+              label: '차종 모델',
+              value: models.contains(profile.modelName)
+                  ? profile.modelName
+                  : null,
+              items: models,
+              onChanged: (String? v) {
+                if (v == null) return;
+                ref.read(profileProvider.notifier).setModelName(v);
+              },
+            )
+          else
+            _EditableValueRow(
+              label: '차종 모델(직접 입력)',
+              value: profile.modelName,
+              onEdit: () async {
+                final String? model = await _showTextEditDialog(
+                  context,
+                  title: '차종 모델 입력',
+                  label: '차종 모델',
+                  initial: profile.modelName,
+                );
+                if (model != null && model.isNotEmpty) {
+                  ref.read(profileProvider.notifier).setModelName(model);
+                }
+              },
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 비차량 모드: 공간 이름 직접 입력.
+class _SpaceNameCard extends ConsumerWidget {
+  const _SpaceNameCard({required this.profile});
+  final SpaceProfile profile;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    return AppCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          const Text(
+            '공간 정보',
+            style: TextStyle(
+              color: AppColors.textPrimary,
+              fontSize: 14,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 12),
+          _EditableValueRow(
+            label: '공간 이름',
+            value: profile.modelName,
+            onEdit: () async {
+              final String? name = await _showTextEditDialog(
+                context,
+                title: '공간 이름 입력',
+                label: '공간 이름',
+                initial: profile.modelName,
+              );
+              if (name != null && name.isNotEmpty) {
+                ref.read(profileProvider.notifier).setModelName(name);
+              }
+            },
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 라벨 + 다크 드롭다운 필드.
+class _DropdownField extends StatelessWidget {
+  const _DropdownField({
+    required this.label,
+    required this.value,
+    required this.items,
+    required this.onChanged,
+  });
+
+  final String label;
+  final String? value;
+  final List<String> items;
+  final ValueChanged<String?> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        Text(
+          label,
+          style: const TextStyle(color: AppColors.textSecondary, fontSize: 12),
+        ),
+        const SizedBox(height: 6),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          decoration: BoxDecoration(
+            color: AppColors.surfaceAlt,
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: DropdownButtonHideUnderline(
+            child: DropdownButton<String>(
+              isExpanded: true,
+              value: value,
+              hint: const Text(
+                '선택',
+                style: TextStyle(color: AppColors.textTertiary, fontSize: 14),
+              ),
+              dropdownColor: AppColors.surfaceAlt,
+              borderRadius: BorderRadius.circular(12),
+              icon: const Icon(Icons.expand_more,
+                  color: AppColors.textSecondary),
+              style: const TextStyle(
+                color: AppColors.textPrimary,
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+              ),
+              items: <DropdownMenuItem<String>>[
+                for (final String item in items)
+                  DropdownMenuItem<String>(value: item, child: Text(item)),
+              ],
+              onChanged: onChanged,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// 라벨 + 현재 값 + 수정 버튼(직접 입력용).
+class _EditableValueRow extends StatelessWidget {
+  const _EditableValueRow({
+    required this.label,
+    required this.value,
+    required this.onEdit,
+  });
+
+  final String label;
+  final String value;
+  final VoidCallback onEdit;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: <Widget>[
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              Text(
+                label,
+                style: const TextStyle(
+                    color: AppColors.textSecondary, fontSize: 12),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                value.isEmpty ? '—' : value,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: AppColors.textPrimary,
+                  fontSize: 15,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+        ),
+        IconButton(
+          onPressed: onEdit,
+          tooltip: '수정',
+          icon: const Icon(Icons.edit_outlined,
+              color: AppColors.textSecondary, size: 20),
+        ),
+      ],
+    );
+  }
+}
+
 class _DeviceTile extends StatelessWidget {
   const _DeviceTile({required this.device});
   final DeviceInfo device;
@@ -437,9 +681,11 @@ class _DeviceTile extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.end,
             children: <Widget>[
               Text(
-                '${device.battery}%',
-                style: const TextStyle(
-                  color: AppColors.green,
+                device.hasBattery ? '${device.battery}%' : '—',
+                style: TextStyle(
+                  color: device.hasBattery
+                      ? AppColors.green
+                      : AppColors.textTertiary,
                   fontSize: 14,
                   fontWeight: FontWeight.w700,
                 ),

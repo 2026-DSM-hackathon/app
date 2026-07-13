@@ -1,9 +1,9 @@
 import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:intl/intl.dart';
 
 import '../../app/theme.dart';
+import '../../core/format.dart';
 import '../../core/models.dart';
 import '../../core/providers.dart';
 import '../../widgets/app_card.dart';
@@ -363,7 +363,7 @@ class _EventRow extends StatelessWidget {
         ),
         const SizedBox(width: 8),
         Text(
-          DateFormat('a h:mm', 'en').format(alert.time),
+          formatTimeKo(alert.time),
           style: const TextStyle(color: AppColors.textTertiary, fontSize: 12),
         ),
       ],

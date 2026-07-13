@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:intl/intl.dart';
 
 import '../../app/theme.dart';
+import '../../core/format.dart';
 import '../../core/models.dart';
 import '../../core/providers.dart';
 import '../../widgets/app_card.dart';
@@ -167,7 +167,7 @@ class _AlertCard extends StatelessWidget {
                 ),
                 const SizedBox(height: 6),
                 Text(
-                  DateFormat('a h:mm', 'en').format(alert.time),
+                  formatTimeKo(alert.time),
                   style: const TextStyle(
                     color: AppColors.textTertiary,
                     fontSize: 11,

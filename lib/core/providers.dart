@@ -1,19 +1,31 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'models.dart';
 import 'services/ble_pairing_service.dart';
+import 'services/esp_sensor_service.dart';
+import 'services/flutter_blue_pairing_service.dart';
 import 'services/inference_service.dart';
 import 'services/notification_service.dart';
 import 'services/sensor_service.dart';
 
 // ---------------------------------------------------------------------------
-// 서비스 프로바이더 (모두 인터페이스 → 목업 구현. 실물로 교체 가능)
+// 서비스 프로바이더 — 데이터 소스는 설정에서 전환한다(목업 ↔ ESP 서버 ↔ BLE)
 // ---------------------------------------------------------------------------
 
+/// 센서 소스: 설정의 데이터 소스에 따라 목업/ESP HTTP 폴링을 사용한다.
 final sensorServiceProvider = Provider<SensorService>((ref) {
-  final SensorService service = MockSensorService();
+  final SensorDataSource source =
+      ref.watch(settingsProvider.select((s) => s.sensorSource));
+  final String espUrl =
+      ref.watch(settingsProvider.select((s) => s.espBaseUrl));
+
+  final SensorService service = switch (source) {
+    SensorDataSource.mock => MockSensorService(),
+    SensorDataSource.esp => EspSensorService(baseUrl: espUrl),
+  };
   ref.onDispose(service.dispose);
   return service;
 });
@@ -28,8 +40,22 @@ final inferenceEngineProvider =
 final notificationServiceProvider =
     Provider<NotificationService>((ref) => MockNotificationService());
 
-final blePairingServiceProvider =
-    Provider<BlePairingService>((ref) => MockBlePairingService());
+/// 이 플랫폼/설정에서 BLE 페어링이 목업으로 동작하는지.
+final blePairingIsMockProvider = Provider<bool>((ref) {
+  final bool forceMock =
+      ref.watch(settingsProvider.select((s) => s.useMockBle));
+  final bool supported = !kIsWeb &&
+      (defaultTargetPlatform == TargetPlatform.android ||
+          defaultTargetPlatform == TargetPlatform.iOS);
+  return forceMock || !supported;
+});
+
+/// BLE 페어링: Android/iOS 에서는 실제(flutter_blue_plus), 그 외/강제 시 목업.
+final blePairingServiceProvider = Provider<BlePairingService>((ref) {
+  return ref.watch(blePairingIsMockProvider)
+      ? MockBlePairingService()
+      : FlutterBluePairingService();
+});
 
 // ---------------------------------------------------------------------------
 // 설정 (6.7)
@@ -43,6 +69,9 @@ class SettingsState {
     this.emergencyContacts = const <EmergencyContact>[
       EmergencyContact(name: '보호자', phone: '010-1234-5678'),
     ],
+    this.sensorSource = SensorDataSource.mock,
+    this.espBaseUrl = 'http://192.168.0.10',
+    this.useMockBle = false,
   });
 
   final double tempThresholdC;
@@ -50,17 +79,32 @@ class SettingsState {
   final double probabilityThreshold;
   final List<EmergencyContact> emergencyContacts;
 
+  /// 센서 데이터 소스(목업/ESP 서버).
+  final SensorDataSource sensorSource;
+
+  /// ESP 보드 서버 베이스 URL (예: http://192.168.0.42).
+  final String espBaseUrl;
+
+  /// BLE 스캔을 목업으로 강제(에뮬레이터/BLE 미지원 환경용).
+  final bool useMockBle;
+
   SettingsState copyWith({
     double? tempThresholdC,
     int? elapsedThresholdSec,
     double? probabilityThreshold,
     List<EmergencyContact>? emergencyContacts,
+    SensorDataSource? sensorSource,
+    String? espBaseUrl,
+    bool? useMockBle,
   }) =>
       SettingsState(
         tempThresholdC: tempThresholdC ?? this.tempThresholdC,
         elapsedThresholdSec: elapsedThresholdSec ?? this.elapsedThresholdSec,
         probabilityThreshold: probabilityThreshold ?? this.probabilityThreshold,
         emergencyContacts: emergencyContacts ?? this.emergencyContacts,
+        sensorSource: sensorSource ?? this.sensorSource,
+        espBaseUrl: espBaseUrl ?? this.espBaseUrl,
+        useMockBle: useMockBle ?? this.useMockBle,
       );
 }
 
@@ -75,6 +119,11 @@ class SettingsNotifier extends Notifier<SettingsState> {
   void setProbabilityThreshold(double v) =>
       state = state.copyWith(probabilityThreshold: v);
 
+  void setSensorSource(SensorDataSource source) =>
+      state = state.copyWith(sensorSource: source);
+  void setEspBaseUrl(String url) => state = state.copyWith(espBaseUrl: url);
+  void setUseMockBle(bool v) => state = state.copyWith(useMockBle: v);
+
   void addContact(EmergencyContact c) => state =
       state.copyWith(emergencyContacts: [...state.emergencyContacts, c]);
   void removeContact(int index) {
@@ -87,21 +136,34 @@ final settingsProvider =
     NotifierProvider<SettingsNotifier, SettingsState>(SettingsNotifier.new);
 
 // ---------------------------------------------------------------------------
-// 차종/공간 프로필 (6.6)
+// 차종/공간 프로필 (6.6) — 로그인 없음: 기본 사용자명 '사용자'
 // ---------------------------------------------------------------------------
 
 class ProfileNotifier extends Notifier<SpaceProfile> {
   @override
   SpaceProfile build() => const SpaceProfile(
-        userName: 'Emily Ashley',
-        email: 'emiashley@gmail.com',
+        userName: '사용자',
+        email: '', // 로그인 미사용
         spaceType: SpaceType.car,
-        modelName: '현대 아이오닉 5',
+        manufacturer: '현대',
+        modelName: '아이오닉 5',
       );
 
   void update(SpaceProfile profile) => state = profile;
+  void setUserName(String name) => state = state.copyWith(userName: name);
   void setSpaceType(SpaceType t) => state = state.copyWith(spaceType: t);
   void setModelName(String name) => state = state.copyWith(modelName: name);
+
+  /// 제조사 변경. 카탈로그 제조사면 해당 첫 모델로 초기화한다.
+  void setManufacturer(String manufacturer) {
+    final List<String>? models = kVehicleCatalog[manufacturer];
+    state = state.copyWith(
+      manufacturer: manufacturer,
+      modelName: models != null && models.isNotEmpty
+          ? models.first
+          : state.modelName,
+    );
+  }
 }
 
 final profileProvider =
@@ -143,10 +205,24 @@ final devicesProvider =
 
 class AlertsNotifier extends Notifier<List<AlertEvent>> {
   final Map<AlertType, DateTime> _lastFired = <AlertType, DateTime>{};
+  final Set<Timer> _timers = <Timer>{};
+  bool _disposed = false;
   int _seq = 0;
 
   @override
-  List<AlertEvent> build() => const <AlertEvent>[];
+  List<AlertEvent> build() {
+    // 초기화 오류 방지: 프로바이더가 폐기되면(핫 리스타트 등) 진행 중인
+    // 에스컬레이션 타이머를 모두 취소해, 폐기된 notifier 의 state 접근으로
+    // "Uninitialized/disposed" 오류가 나지 않게 한다.
+    ref.onDispose(() {
+      _disposed = true;
+      for (final Timer t in _timers) {
+        t.cancel();
+      }
+      _timers.clear();
+    });
+    return const <AlertEvent>[];
+  }
 
   /// 모니터 스트림에서 호출되어 임계값 조건을 평가한다.
   void evaluate({
@@ -212,7 +288,10 @@ class AlertsNotifier extends Notifier<List<AlertEvent>> {
 
   /// 미확인 상태로 10초 경과 시 에스컬레이션.
   void _scheduleEscalation(AlertEvent alert) {
-    Timer(const Duration(seconds: 10), () {
+    late final Timer timer;
+    timer = Timer(const Duration(seconds: 10), () {
+      _timers.remove(timer);
+      if (_disposed) return; // 폐기 후 state 접근 금지
       final AlertEvent current =
           state.firstWhere((a) => a.id == alert.id, orElse: () => alert);
       if (!current.acknowledged) {
@@ -220,6 +299,7 @@ class AlertsNotifier extends Notifier<List<AlertEvent>> {
         ref.read(notificationServiceProvider).escalate(alert);
       }
     });
+    _timers.add(timer);
   }
 
   void acknowledge(String id) =>

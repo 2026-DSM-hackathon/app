@@ -14,6 +14,16 @@ class SensorReading {
   final double motion; // 0.0 ~ 1.0 (움직임 강도)
 }
 
+/// 센서 데이터 소스(ESP 보드 서버 연동 대비).
+enum SensorDataSource { mock, esp }
+
+extension SensorDataSourceLabel on SensorDataSource {
+  String get label => switch (this) {
+        SensorDataSource.mock => '목업 데이터',
+        SensorDataSource.esp => 'ESP 서버',
+      };
+}
+
 /// 추론 출처: 실제 모델 vs 폴백 휴리스틱.
 enum InferenceSource { model, fallback }
 
@@ -103,9 +113,12 @@ class DeviceInfo {
 
   final String id;
   final String name;
-  final int battery; // 0 ~ 100
+  final int battery; // 0 ~ 100, 미확인 시 -1
   final bool connected;
   final SensorType sensorType;
+
+  /// 배터리 정보를 아는 기기인지(실제 BLE 스캔 결과는 -1일 수 있음).
+  bool get hasBattery => battery >= 0;
 
   DeviceInfo copyWith({int? battery, bool? connected}) => DeviceInfo(
         id: id,
@@ -130,33 +143,51 @@ extension SpaceTypeLabel on SpaceType {
   bool get isVehicle => this == SpaceType.car;
 }
 
-/// 차종/공간 프로필(F-08).
+/// 제조사별 차종 모델 카탈로그(직접 입력 지원).
+const String kCustomManufacturer = '직접 입력';
+
+const Map<String, List<String>> kVehicleCatalog = <String, List<String>>{
+  '현대': <String>['아이오닉 5', '아이오닉 6', '코나', '그랜저', '싼타페'],
+  '기아': <String>['EV6', 'EV9', '니로', '쏘렌토', '스포티지'],
+  '제네시스': <String>['GV60', 'GV70', 'GV80', 'G80'],
+  '테슬라': <String>['Model 3', 'Model Y'],
+  'KGM': <String>['토레스', '티볼리'],
+};
+
+/// 차종/공간 프로필(F-08). 차량(제조사)과 차종 모델로 구분한다.
 @immutable
 class SpaceProfile {
   const SpaceProfile({
     required this.userName,
     required this.email,
     required this.spaceType,
+    required this.manufacturer,
     required this.modelName,
   });
 
   final String userName;
-  final String email;
+  final String email; // 로그인 미사용 시 빈 문자열
   final SpaceType spaceType;
-  final String modelName; // 차종명 또는 직접 입력값
+  final String manufacturer; // 제조사(차량 모드) 또는 '직접 입력'
+  final String modelName; // 차종 모델명 / 비차량 모드에서는 공간 이름
 
   bool get isVehicleMode => spaceType.isVehicle;
+
+  /// 카탈로그에 있는 제조사인지(아니면 직접 입력).
+  bool get isCatalogManufacturer => kVehicleCatalog.containsKey(manufacturer);
 
   SpaceProfile copyWith({
     String? userName,
     String? email,
     SpaceType? spaceType,
+    String? manufacturer,
     String? modelName,
   }) =>
       SpaceProfile(
         userName: userName ?? this.userName,
         email: email ?? this.email,
         spaceType: spaceType ?? this.spaceType,
+        manufacturer: manufacturer ?? this.manufacturer,
         modelName: modelName ?? this.modelName,
       );
 }

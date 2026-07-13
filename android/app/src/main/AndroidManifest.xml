@@ -1,8 +1,27 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- ESP 보드 서버(HTTP) 통신 -->
+    <uses-permission android:name="android.permission.INTERNET"/>
+
+    <!-- BLE (Android 12+) -->
+    <uses-permission android:name="android.permission.BLUETOOTH_SCAN"
+        android:usesPermissionFlags="neverForLocation"/>
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT"/>
+
+    <!-- BLE (Android 11 이하 호환) -->
+    <uses-permission android:name="android.permission.BLUETOOTH"
+        android:maxSdkVersion="30"/>
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN"
+        android:maxSdkVersion="30"/>
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"
+        android:maxSdkVersion="30"/>
+
     <application
-        android:label="hack_app"
+        android:label="공간 안전 모니터"
         android:name="${applicationName}"
-        android:icon="@mipmap/ic_launcher">
+        android:icon="@mipmap/ic_launcher"
+        android:usesCleartextTraffic="true">
+        <!-- usesCleartextTraffic: ESP 보드가 LAN 에서 http:// 로 응답하므로 허용.
+             TODO(esp): 보드에 TLS 적용 시 제거하거나 networkSecurityConfig 로 좁히기 -->
         <activity
             android:name=".MainActivity"
             android:exported="true"

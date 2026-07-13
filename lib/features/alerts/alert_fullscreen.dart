@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../app/responsive.dart';
 import '../../app/theme.dart';
 import '../../core/models.dart';
 import '../../core/providers.dart';
@@ -33,69 +34,72 @@ class _AlertFullscreen extends StatelessWidget {
     return Material(
       color: AppColors.background,
       child: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(28),
-          child: Column(
-            children: <Widget>[
-              const Spacer(),
-              Container(
-                width: 108,
-                height: 108,
-                decoration: BoxDecoration(
-                  color: AppColors.red.withValues(alpha: 0.16),
-                  shape: BoxShape.circle,
+        child: ResponsiveCenter(
+          maxWidth: 480,
+          child: Padding(
+            padding: const EdgeInsets.all(28),
+            child: Column(
+              children: <Widget>[
+                const Spacer(),
+                Container(
+                  width: 108,
+                  height: 108,
+                  decoration: BoxDecoration(
+                    color: AppColors.red.withValues(alpha: 0.16),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(Icons.warning_amber_rounded,
+                      color: AppColors.red, size: 60),
                 ),
-                child: const Icon(Icons.warning_amber_rounded,
-                    color: AppColors.red, size: 60),
-              ),
-              const SizedBox(height: 28),
-              Text(
-                alert.title,
-                textAlign: TextAlign.center,
-                style: const TextStyle(
-                  color: AppColors.textPrimary,
-                  fontSize: 26,
-                  fontWeight: FontWeight.w800,
+                const SizedBox(height: 28),
+                Text(
+                  alert.title,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    color: AppColors.textPrimary,
+                    fontSize: 26,
+                    fontWeight: FontWeight.w800,
+                  ),
                 ),
-              ),
-              const SizedBox(height: 12),
-              Text(
-                alert.message,
-                textAlign: TextAlign.center,
-                style: const TextStyle(
-                  color: AppColors.textSecondary,
-                  fontSize: 15,
+                const SizedBox(height: 12),
+                Text(
+                  alert.message,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    color: AppColors.textSecondary,
+                    fontSize: 15,
+                  ),
                 ),
-              ),
-              const Spacer(),
-              SizedBox(
-                width: double.infinity,
-                child: FilledButton(
-                  style: FilledButton.styleFrom(
-                    backgroundColor: AppColors.red,
-                    padding: const EdgeInsets.symmetric(vertical: 16),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(16),
+                const Spacer(),
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton(
+                    style: FilledButton.styleFrom(
+                      backgroundColor: AppColors.red,
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                    ),
+                    onPressed: () {
+                      ref.read(alertsProvider.notifier).acknowledge(alert.id);
+                      Navigator.of(context).pop();
+                    },
+                    child: const Text(
+                      '확인 (ACK)',
+                      style:
+                          TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
                     ),
                   ),
-                  onPressed: () {
-                    ref.read(alertsProvider.notifier).acknowledge(alert.id);
-                    Navigator.of(context).pop();
-                  },
-                  child: const Text(
-                    '확인 (ACK)',
-                    style: TextStyle(
-                        fontSize: 16, fontWeight: FontWeight.w700),
-                  ),
                 ),
-              ),
-              const SizedBox(height: 12),
-              TextButton(
-                onPressed: () => Navigator.of(context).pop(),
-                child: const Text('나중에',
-                    style: TextStyle(color: AppColors.textSecondary)),
-              ),
-            ],
+                const SizedBox(height: 12),
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: const Text('나중에',
+                      style: TextStyle(color: AppColors.textSecondary)),
+                ),
+              ],
+            ),
           ),
         ),
       ),

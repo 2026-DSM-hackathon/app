@@ -164,6 +164,10 @@ class SettingsScreen extends ConsumerWidget {
                 ],
               ),
             ),
+            const SizedBox(height: 22),
+            const SectionHeader(title: '데이터 소스'),
+            const SizedBox(height: 12),
+            _DataSourceCard(settings: settings),
           ],
         ),
       ),
@@ -319,7 +323,7 @@ class _DeviceRow extends StatelessWidget {
               ),
               const SizedBox(height: 2),
               Text(
-                '배터리 ${device.battery}% · ${device.connected ? '연결됨' : '연결 안됨'}',
+                '배터리 ${device.hasBattery ? '${device.battery}%' : '—'} · ${device.connected ? '연결됨' : '연결 안됨'}',
                 style: TextStyle(
                   color: device.connected
                       ? AppColors.textSecondary
@@ -447,6 +451,222 @@ class _AddContactDialogState extends State<_AddContactDialog> {
             ),
           ),
         ],
+      ),
+      actions: <Widget>[
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text(
+            '취소',
+            style: TextStyle(color: AppColors.textSecondary),
+          ),
+        ),
+        TextButton(
+          onPressed: _save,
+          child: const Text(
+            '저장',
+            style: TextStyle(color: AppColors.primary),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// 데이터 소스 카드: 센서 소스(목업/ESP 서버) 전환 + ESP 주소 + BLE 목업 스위치.
+///
+/// TODO(esp): ESP 보드 펌웨어 확정 시 응답 스키마
+///  (GET {주소}/api/sensor → {"temperatureC": 27.5, "motion": 0.42}) 조정.
+class _DataSourceCard extends ConsumerWidget {
+  const _DataSourceCard({required this.settings});
+
+  final SettingsState settings;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final bool bleMock = ref.watch(blePairingIsMockProvider);
+
+    return AppCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          const Text(
+            '센서 데이터',
+            style: TextStyle(
+              color: AppColors.textPrimary,
+              fontSize: 14,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 8,
+            children: <Widget>[
+              for (final SensorDataSource source in SensorDataSource.values)
+                ChoiceChip(
+                  label: Text(source.label),
+                  selected: settings.sensorSource == source,
+                  showCheckmark: false,
+                  onSelected: (_) => ref
+                      .read(settingsProvider.notifier)
+                      .setSensorSource(source),
+                  backgroundColor: AppColors.surfaceAlt,
+                  selectedColor: AppColors.primary,
+                  side: BorderSide.none,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(AppRadii.pill),
+                  ),
+                  labelStyle: TextStyle(
+                    color: settings.sensorSource == source
+                        ? Colors.white
+                        : AppColors.textSecondary,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          Row(
+            children: <Widget>[
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    const Text(
+                      'ESP 서버 주소',
+                      style: TextStyle(
+                          color: AppColors.textSecondary, fontSize: 12),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      settings.espBaseUrl,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: AppColors.textPrimary,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              IconButton(
+                tooltip: 'ESP 주소 수정',
+                onPressed: () => showDialog<void>(
+                  context: context,
+                  builder: (_) => _EditUrlDialog(
+                    initial: settings.espBaseUrl,
+                    onSave: (String url) =>
+                        ref.read(settingsProvider.notifier).setEspBaseUrl(url),
+                  ),
+                ),
+                icon: const Icon(Icons.edit_outlined,
+                    color: AppColors.textSecondary, size: 20),
+              ),
+            ],
+          ),
+          const Divider(color: AppColors.divider, height: 20),
+          Row(
+            children: <Widget>[
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    const Text(
+                      '목업 BLE 스캔',
+                      style: TextStyle(
+                        color: AppColors.textPrimary,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      bleMock
+                          ? '현재 목업 스캔으로 동작해요 (에뮬레이터/미지원 기기)'
+                          : '실제 BLE 스캔을 사용 중이에요',
+                      style: const TextStyle(
+                          color: AppColors.textTertiary, fontSize: 11),
+                    ),
+                  ],
+                ),
+              ),
+              Switch(
+                value: settings.useMockBle,
+                activeThumbColor: AppColors.primary,
+                onChanged: (bool v) =>
+                    ref.read(settingsProvider.notifier).setUseMockBle(v),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            'ESP 보드: GET {주소}/api/sensor → {"temperatureC","motion"} · 펌웨어 확정 후 조정',
+            style: TextStyle(color: AppColors.textTertiary, fontSize: 11),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// ESP 서버 주소 수정 다이얼로그.
+class _EditUrlDialog extends StatefulWidget {
+  const _EditUrlDialog({required this.initial, required this.onSave});
+
+  final String initial;
+  final ValueChanged<String> onSave;
+
+  @override
+  State<_EditUrlDialog> createState() => _EditUrlDialogState();
+}
+
+class _EditUrlDialogState extends State<_EditUrlDialog> {
+  late final TextEditingController _controller =
+      TextEditingController(text: widget.initial);
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _save() {
+    final String url = _controller.text.trim();
+    if (url.isEmpty) {
+      return;
+    }
+    widget.onSave(url);
+    Navigator.of(context).pop();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      backgroundColor: AppColors.surface,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(AppRadii.card),
+      ),
+      title: const Text(
+        'ESP 서버 주소',
+        style: TextStyle(color: AppColors.textPrimary),
+      ),
+      content: TextField(
+        controller: _controller,
+        autofocus: true,
+        keyboardType: TextInputType.url,
+        style: const TextStyle(color: AppColors.textPrimary),
+        decoration: const InputDecoration(
+          labelText: '예: http://192.168.0.42',
+          labelStyle: TextStyle(color: AppColors.textSecondary),
+          enabledBorder: UnderlineInputBorder(
+            borderSide: BorderSide(color: AppColors.divider),
+          ),
+          focusedBorder: UnderlineInputBorder(
+            borderSide: BorderSide(color: AppColors.primary),
+          ),
+        ),
       ),
       actions: <Widget>[
         TextButton(

@@ -89,3 +89,8 @@ extension AirQualityColor on AirQuality {
         AirQuality.poor => AppColors.red,
       };
 }
+
+/// 열사병 확률(0.0~1.0) → 위험도 색상(게이지/위젯 공용).
+Color heatstrokeColor(double risk) => risk >= 0.7
+    ? AppColors.red
+    : (risk >= 0.4 ? AppColors.orange : AppColors.green);

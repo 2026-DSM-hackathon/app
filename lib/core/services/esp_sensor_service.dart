@@ -11,7 +11,7 @@ import 'sensor_service.dart';
 ///
 /// 기대 엔드포인트(펌웨어 확정 전 가안):
 ///   GET {baseUrl}/api/sensor
-///   → {"temperatureC": 27.5, "humidity": 55, "co2": 780, "motion": 0.42}
+///   → {"temperatureC": 27.5, "humidity": 55, "co2": 780, "motion": 0.42, "heatstroke": 0.3}
 ///
 /// TODO(esp): ESP 보드 펌웨어 스키마 확정 시 경로/필드명을 맞추고,
 ///  폴링 대신 WebSocket 푸시로 전환 검토. (MQTT 소스는 MqttSensorService 참고)
@@ -51,6 +51,7 @@ class EspSensorService implements SensorService {
           humidity: (data['humidity'] as num?)?.toDouble() ?? 0,
           co2: (data['co2'] as num?)?.toDouble() ?? 0,
           motion: (data['motion'] as num?)?.toDouble() ?? 0,
+          heatstrokeRisk: (data['heatstroke'] as num?)?.toDouble() ?? 0,
         ),
       );
     } catch (e) {

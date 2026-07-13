@@ -286,18 +286,18 @@ class AlertsNotifier extends Notifier<List<AlertEvent>> {
     final DateTime now = reading.time;
     final bool occupied = occupiedSince != null;
 
-    // 열사병 위험: 탑승 중 + 고온.
+    // 열사병 위험: 차주 하차 상태 + 고온.
     if (occupied && reading.temperatureC >= settings.tempThresholdC) {
       _fire(
         AlertType.highTemperature,
         AlertSeverity.critical,
         now,
         '열사병 위험 경고',
-        '실내 ${reading.temperatureC.toStringAsFixed(1)}°C · 탑승 중 — 즉시 확인하세요',
+        '실내 ${reading.temperatureC.toStringAsFixed(1)}°C · 차주 하차 상태 — 즉시 확인하세요',
       );
     }
 
-    // CO2 농도 경고(환기 부족). 매우 높고(≥2000) 탑승 중이면 위험으로 격상.
+    // CO2 농도 경고(환기 부족). 매우 높고(≥2000) 차주 하차 상태면 위험으로 격상.
     if (reading.co2 >= settings.co2ThresholdPpm) {
       final bool severe = occupied && reading.co2 >= 2000;
       _fire(
@@ -316,8 +316,8 @@ class AlertsNotifier extends Notifier<List<AlertEvent>> {
           AlertType.prolongedOccupancy,
           AlertSeverity.warning,
           now,
-          '장시간 탑승',
-          '${elapsed.inMinutes}분째 탑승 상태가 지속되고 있어요',
+          '장시간 방치 경고',
+          '차주 하차 후 ${elapsed.inMinutes}분째 지속되고 있어요',
         );
       }
     }
@@ -400,7 +400,7 @@ class AlertsNotifier extends Notifier<List<AlertEvent>> {
         AlertSeverity.critical,
         DateTime.now(),
         '열사병 위험 경고 (데모)',
-        '실내 51.0°C · 탑승 중 — 즉시 확인하세요',
+        '실내 51.0°C · 차주 하차 상태 — 즉시 확인하세요',
       );
 }
 
@@ -440,13 +440,14 @@ class MonitorState {
   final InferenceResult? inference;
   final List<InferenceResult> history; // 최근 추론 이력
   final List<SensorReading> sensorHistory; // 온·습도 추이 차트용
-  final bool occupied; // 수동 토글로 설정하는 탑승 상태
-  final DateTime? occupiedSince; // 6.9: 탑승 시작 시각
+  final bool occupied; // 수동 토글: true = 차주 하차 상태(경과시간 측정 중)
+  final DateTime? occupiedSince; // 6.9: 차주 하차 시각
 
   double get probability => inference?.probability ?? 0;
   double get temperatureC => latest?.temperatureC ?? 0;
   double get humidity => latest?.humidity ?? 0;
   double get co2 => latest?.co2 ?? 0;
+  double get heatstroke => latest?.heatstrokeRisk ?? 0; // 0.0~1.0 열사병 확률
 
   factory MonitorState.initial() => const MonitorState(
         latest: null,
@@ -499,7 +500,7 @@ class MonitorNotifier extends Notifier<MonitorState> {
     });
   }
 
-  /// 탑승 상태 수동 온/오프(대시보드 토글). 켤 때 경과시간 측정 시작(6.9).
+  /// 차주 하차 상태 수동 온/오프(대시보드 토글). 켤 때 경과시간 측정 시작(6.9).
   void setOccupied(bool value) {
     state = MonitorState(
       latest: state.latest,
@@ -510,8 +511,9 @@ class MonitorNotifier extends Notifier<MonitorState> {
       occupiedSince: value ? (state.occupiedSince ?? DateTime.now()) : null,
     );
 
-    // §5.1 차주(탑승) 토글 → savein/{시리얼}/cmd 로 retain 발행(MQTT 소스일 때만).
-    ref.read(mqttServiceProvider)?.publishOwnerAboard(value);
+    // §5.1 차주 하차 토글 → cmd 로 retain 발행(MQTT 소스일 때만).
+    // 토글 ON = 차주 하차 이므로 owner_aboard 는 반대값(!value)으로 보낸다.
+    ref.read(mqttServiceProvider)?.publishOwnerAboard(!value);
 
     final SensorReading? r = state.latest;
     if (r != null) {
@@ -543,7 +545,7 @@ class MonitorNotifier extends Notifier<MonitorState> {
       sensorHistory.removeRange(0, sensorHistory.length - 40);
     }
 
-    // 탑승 상태는 수동 토글 값을 유지한다.
+    // 차주 하차 상태는 수동 토글 값을 유지한다.
     state = MonitorState(
       latest: r,
       inference: result,

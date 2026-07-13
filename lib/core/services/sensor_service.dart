@@ -42,11 +42,17 @@ class MockSensorService implements SensorService {
     _baseHumidity += (_rnd.nextDouble() - 0.5) * 4;
     _baseHumidity = _baseHumidity.clamp(30.0, 90.0);
 
-    // CO2: 탑승(사람 호흡) 중이면 상승, 비어있으면 서서히 환기(하강).
+    // CO2: 사람 호흡(움직임) 중이면 상승, 비어있으면 서서히 환기(하강).
     _baseCo2 += occupiedNow
         ? (30 + _rnd.nextDouble() * 90)
         : (-40 + _rnd.nextDouble() * 30);
     _baseCo2 = _baseCo2.clamp(400.0, 2600.0);
+
+    // 열사병 확률: 실내 온도(+습도)에 따라 상승. POD telemetry 값의 목업.
+    final double heat = (((_baseTemp - 28) / 20) +
+            (_baseHumidity - 50) / 200 +
+            (_rnd.nextDouble() - 0.5) * 0.05)
+        .clamp(0.0, 1.0);
 
     _controller.add(
       SensorReading(
@@ -55,6 +61,7 @@ class MockSensorService implements SensorService {
         humidity: double.parse(_baseHumidity.toStringAsFixed(0)),
         co2: double.parse(_baseCo2.toStringAsFixed(0)),
         motion: double.parse(motion.toStringAsFixed(2)),
+        heatstrokeRisk: double.parse(heat.toStringAsFixed(2)),
       ),
     );
   }

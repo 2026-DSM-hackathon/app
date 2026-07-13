@@ -64,7 +64,7 @@ class SyncProgress {
 ///
 /// TODO(fw): 아래 JSON 스키마는 임시 가안이다(§5·§5.1 미확정). 펌웨어 확정 시
 ///  필드명만 맞추면 되도록 방어적으로 파싱한다(여러 키 이름 허용).
-///   telemetry → {"tempC":27.5,"humidity":55,"co2":780,"motion":0.42}
+///   telemetry → {"tempC":27.5,"humidity":55,"co2":780,"motion":0.42,"heatstroke":0.3}
 ///   event     → {"type":"high_co2","severity":"warning","message":"..."}
 ///   status    → "online" / "offline" (평문) 또는 {"status":"online"}
 ///   sync      → {"phase":"info","count":120} / {"phase":"data","samples":[...]} / {"phase":"end"}
@@ -251,6 +251,11 @@ class MqttSensorService implements SensorService {
   void _handleTelemetry(String payload) {
     final Object? decoded = jsonDecode(payload);
     if (decoded is! Map<String, dynamic>) return;
+    // 열사병 확률: 0~1 또는 0~100 으로 올 수 있어, 1 초과면 백분율로 간주해 정규화.
+    final double heatRaw = _pickNum(decoded,
+            ['heatstroke', 'heatstrokeRisk', 'heat_risk', 'risk', 'heat']) ??
+        0;
+    final double heat = (heatRaw > 1 ? heatRaw / 100 : heatRaw).clamp(0.0, 1.0);
     final SensorReading reading = SensorReading(
       time: DateTime.now(),
       temperatureC:
@@ -259,6 +264,7 @@ class MqttSensorService implements SensorService {
       humidity: _pickNum(decoded, ['humidity', 'hum', 'rh']) ?? 0,
       co2: _pickNum(decoded, ['co2', 'co2ppm', 'co2_ppm', 'eco2', 'CO2']) ?? 0,
       motion: _pickNum(decoded, ['motion', 'move', 'movement']) ?? 0,
+      heatstrokeRisk: heat,
     );
     if (!_telemetry.isClosed) _telemetry.add(reading);
     // 텔레메트리가 오면 POD 는 온라인으로 간주.
@@ -391,7 +397,8 @@ class MqttSensorService implements SensorService {
 
   int get _nowSec => DateTime.now().millisecondsSinceEpoch ~/ 1000;
 
-  /// §5.1 차주(탑승) 토글 — retain 발행 권장. 마지막 상태가 브로커에 유지된다.
+  /// §5.1 차주 하차/탑승 토글 — retain 발행 권장. 마지막 상태가 브로커에 유지된다.
+  /// aboard=false 이면 차주 하차(대시보드 '차주 하차' ON) 상태다.
   void publishOwnerAboard(bool aboard) => _publish(
         cmdTopic,
         <String, dynamic>{'cmd': 'owner_aboard', 'value': aboard, 'ts': _nowSec},

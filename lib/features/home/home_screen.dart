@@ -28,7 +28,8 @@ class HomeScreen extends ConsumerWidget {
     final SettingsState settings = ref.watch(settingsProvider);
     final int unread = ref.watch(unacknowledgedCountProvider);
 
-    final int pct = (monitor.probability * 100).round();
+    final double risk = monitor.heatstroke; // 열사병 확률(0~1, 토픽 수신)
+    final int pct = (risk * 100).round();
     final bool occupied = monitor.occupied;
     final double temp = monitor.temperatureC;
     final double humidity = monitor.humidity;
@@ -58,17 +59,17 @@ class HomeScreen extends ConsumerWidget {
         accent: co2.airQuality.color,
       ),
       StatCard(
-        title: '탑승 상태',
-        value: occupied ? '탑승' : '비어있음',
-        icon: occupied ? Icons.event_seat_rounded : Icons.chair_outlined,
+        title: '차주 하차',
+        value: occupied ? '하차' : '대기',
+        icon: occupied ? Icons.directions_walk_rounded : Icons.chair_outlined,
         accent: occupied ? AppColors.green : AppColors.textTertiary,
       ),
       StatCard(
-        title: '감지 확률',
+        title: '열사병 확률',
         value: '$pct',
         unit: '%',
-        icon: Icons.query_stats_rounded,
-        accent: AppColors.primary,
+        icon: Icons.local_fire_department_rounded,
+        accent: heatstrokeColor(risk),
       ),
     ];
 
@@ -192,7 +193,7 @@ class _Header extends StatelessWidget {
   }
 }
 
-/// 주 카드: 탑승 상태 온/오프 토글 + 큰 경과시간 + 감지 확률 게이지.
+/// 주 카드: 차주 하차 토글 + 큰 경과시간 + 열사병 확률 게이지.
 class _PrimaryCard extends StatelessWidget {
   const _PrimaryCard({
     required this.monitor,
@@ -217,16 +218,20 @@ class _PrimaryCard extends StatelessWidget {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: <Widget>[
-              const Text('탑승 감지',
-                  style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.w700,
-                      color: AppColors.textPrimary)),
-              // 탑승 상태 수동 온/오프 버튼.
+              const Flexible(
+                child: Text('차주 하차 감지',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.textPrimary)),
+              ),
+              // 차주 하차 상태 수동 온/오프 버튼.
               Row(
                 mainAxisSize: MainAxisSize.min,
                 children: <Widget>[
-                  Text(occupied ? '탑승 ON' : '탑승 OFF',
+                  Text(occupied ? '차주 하차 ON' : '차주 하차 OFF',
                       style: TextStyle(
                         color: occupied
                             ? AppColors.green
@@ -247,9 +252,10 @@ class _PrimaryCard extends StatelessWidget {
           Align(
             alignment: Alignment.centerLeft,
             child: StatusPill(
-              label: occupied ? '탑승 중' : '비어있음',
+              label: occupied ? '차주 하차' : '감지 대기',
               color: occupied ? AppColors.green : AppColors.textSecondary,
-              icon: occupied ? Icons.event_seat_rounded : Icons.chair_outlined,
+              icon:
+                  occupied ? Icons.directions_walk_rounded : Icons.chair_outlined,
             ),
           ),
           const SizedBox(height: 18),
@@ -265,7 +271,7 @@ class _PrimaryCard extends StatelessWidget {
                         Icon(Icons.timer_outlined,
                             size: 16, color: AppColors.blue),
                         SizedBox(width: 6),
-                        Text('탑승 경과 시간',
+                        Text('차주 하차 경과 시간',
                             style: TextStyle(
                                 color: AppColors.textSecondary, fontSize: 13)),
                       ],
@@ -293,12 +299,12 @@ class _PrimaryCard extends StatelessWidget {
               ),
               const SizedBox(width: 12),
               RingGauge(
-                value: monitor.probability,
+                value: monitor.heatstroke,
                 size: 96,
                 stroke: 11,
-                color: occupied ? AppColors.green : AppColors.blue,
+                color: heatstrokeColor(monitor.heatstroke),
                 centerText: '$pct%',
-                centerSubtext: '감지 확률',
+                centerSubtext: '열사병 확률',
               ),
             ],
           ),

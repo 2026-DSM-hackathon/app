@@ -9,6 +9,7 @@ class SensorReading {
     required this.humidity,
     required this.co2,
     required this.motion,
+    this.heatstrokeRisk = 0,
   });
 
   final DateTime time;
@@ -16,6 +17,7 @@ class SensorReading {
   final double humidity; // 상대습도 %
   final double co2; // CO2 농도 ppm
   final double motion; // 0.0 ~ 1.0 (움직임 강도)
+  final double heatstrokeRisk; // 0.0 ~ 1.0 열사병 확률(POD telemetry 로 수신)
 }
 
 /// CO2 공기질 등급(실내 기준 근사값). 위젯/차트 색상에 사용.

@@ -168,6 +168,10 @@ class SettingsScreen extends ConsumerWidget {
             const SectionHeader(title: '데이터 소스'),
             const SizedBox(height: 12),
             _DataSourceCard(settings: settings),
+            const SizedBox(height: 22),
+            const SectionHeader(title: '알림'),
+            const SizedBox(height: 12),
+            const _NotificationCard(),
           ],
         ),
       ),
@@ -468,6 +472,92 @@ class _AddContactDialogState extends State<_AddContactDialog> {
           ),
         ),
       ],
+    );
+  }
+}
+
+/// 알림 카드: 권한 허용 토글 + 앱 종료 후 알림 테스트(열사병 로컬 알림).
+class _NotificationCard extends ConsumerWidget {
+  const _NotificationCard();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final bool enabled = ref.watch(notificationEnabledProvider);
+    return AppCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Row(
+            children: <Widget>[
+              const Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    Text('알림 허용',
+                        style: TextStyle(
+                            color: AppColors.textPrimary,
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600)),
+                    SizedBox(height: 2),
+                    Text('열사병 경보를 기기에서 직접 팝업으로 알립니다',
+                        style: TextStyle(
+                            color: AppColors.textTertiary, fontSize: 11)),
+                  ],
+                ),
+              ),
+              Switch(
+                value: enabled,
+                activeThumbColor: AppColors.primary,
+                onChanged: (bool v) async {
+                  final ScaffoldMessengerState messenger =
+                      ScaffoldMessenger.of(context);
+                  if (v) {
+                    final bool granted = await ref
+                        .read(notificationServiceProvider)
+                        .requestPermission();
+                    ref
+                        .read(notificationEnabledProvider.notifier)
+                        .set(granted);
+                    messenger.showSnackBar(SnackBar(
+                        content: Text(granted
+                            ? '알림이 허용되었습니다'
+                            : '알림 권한이 거부되었습니다. 기기 설정에서 허용해 주세요')));
+                  } else {
+                    ref.read(notificationEnabledProvider.notifier).set(false);
+                  }
+                },
+              ),
+            ],
+          ),
+          const Divider(color: AppColors.divider, height: 24),
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              style: OutlinedButton.styleFrom(
+                foregroundColor: AppColors.red,
+                side: const BorderSide(color: AppColors.red),
+                padding: const EdgeInsets.symmetric(vertical: 12),
+              ),
+              onPressed: () async {
+                final ScaffoldMessengerState messenger =
+                    ScaffoldMessenger.of(context);
+                await ref
+                    .read(notificationServiceProvider)
+                    .scheduleDelayedCritical(
+                      title: '🚨 열사병 위험 경고',
+                      body: '차량 내 고온·탑승 감지 — 즉시 확인하세요',
+                      delay: const Duration(seconds: 15),
+                    );
+                messenger.showSnackBar(const SnackBar(
+                    content:
+                        Text('15초 뒤 알림이 도착합니다. 지금 앱을 종료해도 팝업이 떠요.')));
+              },
+              icon: const Icon(Icons.notifications_active_outlined, size: 18),
+              label: const Text('앱 종료 후 알림 테스트 (15초)'),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

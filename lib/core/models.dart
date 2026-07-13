@@ -6,11 +6,13 @@ class SensorReading {
   const SensorReading({
     required this.time,
     required this.temperatureC,
+    required this.humidity,
     required this.motion,
   });
 
   final DateTime time;
   final double temperatureC; // 섭씨
+  final double humidity; // 상대습도 %
   final double motion; // 0.0 ~ 1.0 (움직임 강도)
 }
 

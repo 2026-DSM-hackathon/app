@@ -7,6 +7,20 @@ import 'package:hack_app/core/format.dart';
 import 'package:hack_app/core/models.dart';
 import 'package:hack_app/core/providers.dart';
 import 'package:hack_app/core/services/inference_service.dart';
+import 'package:hack_app/core/services/notification_service.dart';
+
+SensorReading _reading({
+  required DateTime time,
+  double temperatureC = 25,
+  double humidity = 50,
+  double motion = 0,
+}) =>
+    SensorReading(
+      time: time,
+      temperatureC: temperatureC,
+      humidity: humidity,
+      motion: motion,
+    );
 
 void main() {
   group('format', () {
@@ -25,11 +39,8 @@ void main() {
     test('최근 N개 샘플만 유지한다', () {
       final WindowBuffer buffer = WindowBuffer(size: 3);
       for (int i = 0; i < 5; i++) {
-        buffer.add(SensorReading(
-          time: DateTime(2026, 1, 1, 0, 0, i),
-          temperatureC: 20 + i.toDouble(),
-          motion: 0,
-        ));
+        buffer.add(_reading(
+            time: DateTime(2026, 1, 1, 0, 0, i), temperatureC: 20 + i.toDouble()));
       }
       expect(buffer.window.length, 3);
       expect(buffer.window.first.temperatureC, 22);
@@ -42,11 +53,7 @@ void main() {
       final FallbackInferenceEngine engine = FallbackInferenceEngine();
       final List<SensorReading> window = <SensorReading>[
         for (int i = 0; i < 10; i++)
-          SensorReading(
-            time: DateTime(2026, 1, 1, 0, 0, i),
-            temperatureC: 25,
-            motion: 0.8,
-          ),
+          _reading(time: DateTime(2026, 1, 1, 0, 0, i), motion: 0.8),
       ];
       final InferenceResult result = engine.infer(window);
       expect(result.occupied, isTrue);
@@ -57,7 +64,12 @@ void main() {
   group('providers', () {
     late ProviderContainer container;
 
-    setUp(() => container = ProviderContainer());
+    setUp(() => container = ProviderContainer(
+          overrides: [
+            notificationServiceProvider
+                .overrideWith((ref) => MockNotificationService()),
+          ],
+        ));
     tearDown(() => container.dispose());
 
     test('프로필 기본값은 로그인 없는 "사용자"다', () {
@@ -75,20 +87,30 @@ void main() {
       expect(profile.modelName, kVehicleCatalog['기아']!.first);
     });
 
-    test('알림 평가: 고온+탑승이면 critical 알림이 발생한다', () {
+    test('알림 평가: 탑승 중 + 고온이면 열사병 critical 알림이 발생한다', () {
       final DateTime t = DateTime(2026, 7, 13, 12);
       container.read(alertsProvider.notifier).evaluate(
-            reading:
-                SensorReading(time: t, temperatureC: 45, motion: 0.9),
+            reading: _reading(time: t, temperatureC: 45, humidity: 40, motion: 0.9),
             result: InferenceResult(
                 time: t, probability: 0.9, source: InferenceSource.fallback),
-            occupiedSince: null,
+            occupiedSince: t, // 탑승 중(경과 0 → 장시간 알림은 없음)
             settings: const SettingsState(),
           );
       final List<AlertEvent> alerts = container.read(alertsProvider);
       expect(alerts, hasLength(1));
       expect(alerts.first.severity, AlertSeverity.critical);
-      // tearDown 의 dispose 가 에스컬레이션 타이머를 취소해야 한다(초기화 오류 수정).
+    });
+
+    test('탑승 OFF면 고온이어도 알림이 없다', () {
+      final DateTime t = DateTime(2026, 7, 13, 12);
+      container.read(alertsProvider.notifier).evaluate(
+            reading: _reading(time: t, temperatureC: 50, humidity: 40),
+            result: InferenceResult(
+                time: t, probability: 0.9, source: InferenceSource.fallback),
+            occupiedSince: null, // 비어있음
+            settings: const SettingsState(),
+          );
+      expect(container.read(alertsProvider), isEmpty);
     });
 
     test('데이터 소스 전환/ESP 주소/BLE 목업 설정이 반영된다', () {

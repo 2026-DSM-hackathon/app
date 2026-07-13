@@ -31,6 +31,7 @@ class HomeScreen extends ConsumerWidget {
     final int pct = (monitor.probability * 100).round();
     final bool occupied = monitor.occupied;
     final double temp = monitor.temperatureC;
+    final double humidity = monitor.humidity;
     final bool hot = temp >= settings.tempThresholdC;
 
     final List<Widget> statCards = <Widget>[
@@ -42,12 +43,18 @@ class HomeScreen extends ConsumerWidget {
         accent: hot ? AppColors.orange : AppColors.teal,
       ),
       StatCard(
+        title: '습도',
+        value: humidity.toStringAsFixed(0),
+        unit: '%',
+        icon: Icons.water_drop_rounded,
+        accent: AppColors.blue,
+      ),
+      StatCard(
         title: '탑승 상태',
         value: occupied ? '탑승' : '비어있음',
         icon: occupied ? Icons.event_seat_rounded : Icons.chair_outlined,
         accent: occupied ? AppColors.green : AppColors.textTertiary,
       ),
-      _ElapsedCard(since: monitor.occupiedSince),
       StatCard(
         title: '감지 확률',
         value: '$pct',
@@ -69,11 +76,14 @@ class HomeScreen extends ConsumerWidget {
           ),
           const SizedBox(height: 22),
           _PrimaryCard(
-              monitor: monitor, occupied: occupied, pct: pct, temp: temp, hot: hot),
+            monitor: monitor,
+            pct: pct,
+            hot: hot,
+            onToggle: (bool v) =>
+                ref.read(monitorProvider.notifier).setOccupied(v),
+          ),
           const SizedBox(height: 16),
-          // 기종 반응형: 넓은 화면은 4열 한 줄, 좁은 화면은 2x2.
-          // 세로가 unbounded인 ListView 안이므로, 카드 높이를 맞추는
-          // CrossAxisAlignment.stretch 는 반드시 IntrinsicHeight 로 감싼다.
+          // 기종 반응형: 넓은 화면은 4열, 좁은 화면은 2x2 (IntrinsicHeight 로 높이 정렬).
           LayoutBuilder(
             builder: (BuildContext context, BoxConstraints c) {
               if (c.maxWidth >= Breakpoints.wideStats) {
@@ -176,134 +186,115 @@ class _Header extends StatelessWidget {
   }
 }
 
+/// 주 카드: 탑승 상태 온/오프 토글 + 큰 경과시간 + 감지 확률 게이지.
 class _PrimaryCard extends StatelessWidget {
   const _PrimaryCard({
     required this.monitor,
-    required this.occupied,
     required this.pct,
-    required this.temp,
     required this.hot,
+    required this.onToggle,
   });
 
   final MonitorState monitor;
-  final bool occupied;
   final int pct;
-  final double temp;
   final bool hot;
+  final ValueChanged<bool> onToggle;
 
   @override
   Widget build(BuildContext context) {
-    final InferenceResult? inf = monitor.inference;
-
-    final Widget info = Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: <Widget>[
-        const Text('탑승 감지',
-            style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.w700,
-                color: AppColors.textPrimary)),
-        const SizedBox(height: 12),
-        StatusPill(
-          label: occupied ? '탑승 중' : '비어있음',
-          color: occupied ? AppColors.green : AppColors.textSecondary,
-          icon: occupied ? Icons.event_seat_rounded : Icons.chair_outlined,
-        ),
-        const SizedBox(height: 16),
-        Text('실내 온도 ${temp.toStringAsFixed(1)}°C',
-            style: TextStyle(
-                color: hot ? AppColors.orange : AppColors.textSecondary,
-                fontSize: 13)),
-        const SizedBox(height: 4),
-        Row(
-          mainAxisSize: MainAxisSize.min,
-          children: <Widget>[
-            const Text('경과 ',
-                style:
-                    TextStyle(color: AppColors.textSecondary, fontSize: 13)),
-            _LiveDuration(
-              since: monitor.occupiedSince,
-              style: const TextStyle(
-                  color: AppColors.textPrimary,
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600),
-            ),
-          ],
-        ),
-        if (inf != null) ...<Widget>[
-          const SizedBox(height: 10),
-          Text(
-            '추론: ${inf.source == InferenceSource.model ? '모델' : '폴백(휴리스틱)'}',
-            style:
-                const TextStyle(color: AppColors.textTertiary, fontSize: 11),
-          ),
-        ],
-      ],
-    );
-
-    final Widget gauge = RingGauge(
-      value: monitor.probability,
-      size: 116,
-      stroke: 12,
-      color: occupied ? AppColors.green : AppColors.blue,
-      centerText: '$pct%',
-      centerSubtext: '감지 확률',
-    );
-
+    final bool occupied = monitor.occupied;
     return AppCard(
       padding: const EdgeInsets.all(20),
-      child: LayoutBuilder(
-        builder: (BuildContext context, BoxConstraints c) {
-          // 기종 반응형: 초소형 화면에서는 게이지를 아래로 내린다.
-          if (c.maxWidth < Breakpoints.narrowCard) {
-            return Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: <Widget>[
-                info,
-                const SizedBox(height: 16),
-                Center(child: gauge),
-              ],
-            );
-          }
-          return Row(
-            children: <Widget>[
-              Expanded(child: info),
-              const SizedBox(width: 12),
-              gauge,
-            ],
-          );
-        },
-      ),
-    );
-  }
-}
-
-class _ElapsedCard extends StatelessWidget {
-  const _ElapsedCard({required this.since});
-  final DateTime? since;
-
-  @override
-  Widget build(BuildContext context) {
-    return AppCard(
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: <Widget>[
-          const Row(
+          Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: <Widget>[
-              Text('경과 시간',
-                  style:
-                      TextStyle(color: AppColors.textSecondary, fontSize: 13)),
-              Icon(Icons.timer_outlined, size: 18, color: AppColors.blue),
+              const Text('탑승 감지',
+                  style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.textPrimary)),
+              // 탑승 상태 수동 온/오프 버튼.
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: <Widget>[
+                  Text(occupied ? '탑승 ON' : '탑승 OFF',
+                      style: TextStyle(
+                        color: occupied
+                            ? AppColors.green
+                            : AppColors.textSecondary,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      )),
+                  Switch(
+                    value: occupied,
+                    activeThumbColor: AppColors.green,
+                    onChanged: onToggle,
+                  ),
+                ],
+              ),
             ],
           ),
-          const SizedBox(height: 14),
-          _LiveDuration(
-            since: since,
-            style: const TextStyle(
-                color: AppColors.textPrimary,
-                fontSize: 20,
-                fontWeight: FontWeight.w700),
+          const SizedBox(height: 4),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: StatusPill(
+              label: occupied ? '탑승 중' : '비어있음',
+              color: occupied ? AppColors.green : AppColors.textSecondary,
+              icon: occupied ? Icons.event_seat_rounded : Icons.chair_outlined,
+            ),
+          ),
+          const SizedBox(height: 18),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: <Widget>[
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    const Row(
+                      children: <Widget>[
+                        Icon(Icons.timer_outlined,
+                            size: 16, color: AppColors.blue),
+                        SizedBox(width: 6),
+                        Text('탑승 경과 시간',
+                            style: TextStyle(
+                                color: AppColors.textSecondary, fontSize: 13)),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                    // 경과시간 강조(큰 글씨).
+                    _LiveDuration(
+                      since: monitor.occupiedSince,
+                      style: const TextStyle(
+                          color: AppColors.textPrimary,
+                          fontSize: 40,
+                          fontWeight: FontWeight.w800,
+                          height: 1.0),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      '실내 온도 ${monitor.temperatureC.toStringAsFixed(1)}°C · 습도 ${monitor.humidity.toStringAsFixed(0)}%',
+                      style: TextStyle(
+                          color:
+                              hot ? AppColors.orange : AppColors.textTertiary,
+                          fontSize: 12),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 12),
+              RingGauge(
+                value: monitor.probability,
+                size: 96,
+                stroke: 11,
+                color: occupied ? AppColors.green : AppColors.blue,
+                centerText: '$pct%',
+                centerSubtext: '감지 확률',
+              ),
+            ],
           ),
         ],
       ),
@@ -311,26 +302,39 @@ class _ElapsedCard extends StatelessWidget {
   }
 }
 
+/// 온·습도 추이 카드.
 class _TrendCard extends StatelessWidget {
   const _TrendCard({required this.monitor});
   final MonitorState monitor;
 
   @override
   Widget build(BuildContext context) {
-    final List<FlSpot> spots = <FlSpot>[
-      for (int i = 0; i < monitor.history.length; i++)
-        FlSpot(i.toDouble(), monitor.history[i].probability * 100),
+    final List<SensorReading> sh = monitor.sensorHistory;
+    final List<FlSpot> tempSpots = <FlSpot>[
+      for (int i = 0; i < sh.length; i++) FlSpot(i.toDouble(), sh[i].temperatureC),
     ];
+    final List<FlSpot> humSpots = <FlSpot>[
+      for (int i = 0; i < sh.length; i++) FlSpot(i.toDouble(), sh[i].humidity),
+    ];
+
     return AppCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: <Widget>[
           const SectionHeader(
-            title: '탑승 확률 추이',
+            title: '온·습도 추이',
             trailing: StatusPill(label: '실시간', color: AppColors.teal),
           ),
-          const SizedBox(height: 16),
-          if (spots.length < 2)
+          const SizedBox(height: 10),
+          Row(
+            children: const <Widget>[
+              _LegendDot(color: AppColors.teal, label: '온도 °C'),
+              SizedBox(width: 16),
+              _LegendDot(color: AppColors.blue, label: '습도 %'),
+            ],
+          ),
+          const SizedBox(height: 12),
+          if (tempSpots.length < 2)
             const SizedBox(
               height: 170,
               child: Center(
@@ -341,7 +345,8 @@ class _TrendCard extends StatelessWidget {
           else
             TrendChart(
               series: <TrendSeries>[
-                TrendSeries(spots: spots, color: AppColors.teal),
+                TrendSeries(spots: tempSpots, color: AppColors.teal),
+                TrendSeries(spots: humSpots, color: AppColors.blue),
               ],
               minY: 0,
               maxY: 100,
@@ -349,6 +354,29 @@ class _TrendCard extends StatelessWidget {
             ),
         ],
       ),
+    );
+  }
+}
+
+class _LegendDot extends StatelessWidget {
+  const _LegendDot({required this.color, required this.label});
+  final Color color;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: <Widget>[
+        Container(
+          width: 10,
+          height: 10,
+          decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+        ),
+        const SizedBox(width: 6),
+        Text(label,
+            style: const TextStyle(color: AppColors.textSecondary, fontSize: 12)),
+      ],
     );
   }
 }
@@ -384,16 +412,18 @@ class _LiveDurationState extends State<_LiveDuration> {
   Widget build(BuildContext context) {
     final DateTime? since = widget.since;
     final String text =
-        since == null ? '—' : _fmt(DateTime.now().difference(since));
+        since == null ? '00:00' : _fmt(DateTime.now().difference(since));
     return Text(text, style: widget.style);
   }
 
   String _fmt(Duration d) {
-    if (d.isNegative) return '0:00';
+    if (d.isNegative) return '00:00';
     final int h = d.inHours;
     final int m = d.inMinutes.remainder(60);
     final int s = d.inSeconds.remainder(60);
-    if (h > 0) return '${h}h ${m.toString().padLeft(2, '0')}m';
-    return '$m:${s.toString().padLeft(2, '0')}';
+    if (h > 0) {
+      return '$h:${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}';
+    }
+    return '${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}';
   }
 }

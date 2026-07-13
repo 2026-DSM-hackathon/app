@@ -265,15 +265,16 @@ class _UserCard extends StatelessWidget {
                     fontWeight: FontWeight.w700,
                   ),
                 ),
-                const SizedBox(height: 4),
-                Text(
-                  // 로그인 미사용: 이메일 대신 상태 문구를 보여준다.
-                  profile.email.isEmpty ? '로그인 없이 사용 중' : profile.email,
-                  style: const TextStyle(
-                    color: AppColors.textSecondary,
-                    fontSize: 13,
+                if (profile.email.isNotEmpty) ...<Widget>[
+                  const SizedBox(height: 4),
+                  Text(
+                    profile.email,
+                    style: const TextStyle(
+                      color: AppColors.textSecondary,
+                      fontSize: 13,
+                    ),
                   ),
-                ),
+                ],
               ],
             ),
           ),

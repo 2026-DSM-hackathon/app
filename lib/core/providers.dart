@@ -232,15 +232,16 @@ class AlertsNotifier extends Notifier<List<AlertEvent>> {
     required SettingsState settings,
   }) {
     final DateTime now = reading.time;
+    final bool occupied = occupiedSince != null;
 
-    if (reading.temperatureC >= settings.tempThresholdC &&
-        result.probability >= settings.probabilityThreshold) {
+    // 열사병 위험: 탑승 중 + 고온.
+    if (occupied && reading.temperatureC >= settings.tempThresholdC) {
       _fire(
         AlertType.highTemperature,
         AlertSeverity.critical,
         now,
-        '고온 경고',
-        '실내 ${reading.temperatureC.toStringAsFixed(1)}°C · 탑승 감지됨',
+        '열사병 위험 경고',
+        '실내 ${reading.temperatureC.toStringAsFixed(1)}°C · 탑승 중 — 즉시 확인하세요',
       );
     }
 
@@ -319,10 +320,21 @@ class AlertsNotifier extends Notifier<List<AlertEvent>> {
         AlertType.highTemperature,
         AlertSeverity.critical,
         DateTime.now(),
-        '고온 경고 (데모)',
-        '실내 51.0°C · 탑승 감지됨',
+        '열사병 위험 경고 (데모)',
+        '실내 51.0°C · 탑승 중 — 즉시 확인하세요',
       );
 }
+
+/// 알림 권한 허용 여부(설정 토글 표시용).
+class NotificationEnabledNotifier extends Notifier<bool> {
+  @override
+  bool build() => false;
+  void set(bool v) => state = v;
+}
+
+final notificationEnabledProvider =
+    NotifierProvider<NotificationEnabledNotifier, bool>(
+        NotificationEnabledNotifier.new);
 
 final alertsProvider =
     NotifierProvider<AlertsNotifier, List<AlertEvent>>(AlertsNotifier.new);
@@ -340,23 +352,27 @@ class MonitorState {
     required this.latest,
     required this.inference,
     required this.history,
+    required this.sensorHistory,
     required this.occupied,
     required this.occupiedSince,
   });
 
   final SensorReading? latest;
   final InferenceResult? inference;
-  final List<InferenceResult> history; // 최근 추론 이력(차트용)
-  final bool occupied;
+  final List<InferenceResult> history; // 최근 추론 이력
+  final List<SensorReading> sensorHistory; // 온·습도 추이 차트용
+  final bool occupied; // 수동 토글로 설정하는 탑승 상태
   final DateTime? occupiedSince; // 6.9: 탑승 시작 시각
 
   double get probability => inference?.probability ?? 0;
   double get temperatureC => latest?.temperatureC ?? 0;
+  double get humidity => latest?.humidity ?? 0;
 
   factory MonitorState.initial() => const MonitorState(
         latest: null,
         inference: null,
         history: <InferenceResult>[],
+        sensorHistory: <SensorReading>[],
         occupied: false,
         occupiedSince: null,
       );
@@ -374,35 +390,61 @@ class MonitorNotifier extends Notifier<MonitorState> {
     return MonitorState.initial();
   }
 
+  /// 탑승 상태 수동 온/오프(대시보드 토글). 켤 때 경과시간 측정 시작(6.9).
+  void setOccupied(bool value) {
+    state = MonitorState(
+      latest: state.latest,
+      inference: state.inference,
+      history: state.history,
+      sensorHistory: state.sensorHistory,
+      occupied: value,
+      occupiedSince: value ? (state.occupiedSince ?? DateTime.now()) : null,
+    );
+
+    final SensorReading? r = state.latest;
+    if (r != null) {
+      ref.read(alertsProvider.notifier).evaluate(
+            reading: r,
+            result: state.inference ??
+                InferenceResult(
+                    time: r.time,
+                    probability: 0,
+                    source: InferenceSource.fallback),
+            occupiedSince: state.occupiedSince,
+            settings: ref.read(settingsProvider),
+          );
+    }
+  }
+
   void _onReading(SensorReading r) {
     _buffer.add(r);
     final InferenceResult result =
         ref.read(inferenceEngineProvider).infer(_buffer.window);
     final SettingsState settings = ref.read(settingsProvider);
 
-    // 6.9: 자리 on/off 전이 감지 → 탑승 시작 시각 유지/초기화.
-    final bool nowOccupied = result.probability >= settings.probabilityThreshold;
-    final bool was = state.occupied;
-    final DateTime? since =
-        nowOccupied ? (was ? state.occupiedSince : r.time) : null;
-
     final List<InferenceResult> history = [...state.history, result];
     if (history.length > 40) {
       history.removeRange(0, history.length - 40);
     }
+    final List<SensorReading> sensorHistory = [...state.sensorHistory, r];
+    if (sensorHistory.length > 40) {
+      sensorHistory.removeRange(0, sensorHistory.length - 40);
+    }
 
+    // 탑승 상태는 수동 토글 값을 유지한다.
     state = MonitorState(
       latest: r,
       inference: result,
       history: history,
-      occupied: nowOccupied,
-      occupiedSince: since,
+      sensorHistory: sensorHistory,
+      occupied: state.occupied,
+      occupiedSince: state.occupiedSince,
     );
 
     ref.read(alertsProvider.notifier).evaluate(
           reading: r,
           result: result,
-          occupiedSince: since,
+          occupiedSince: state.occupiedSince,
           settings: settings,
         );
   }

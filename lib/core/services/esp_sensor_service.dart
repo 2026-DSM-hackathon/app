@@ -48,7 +48,8 @@ class EspSensorService implements SensorService {
         SensorReading(
           time: DateTime.now(),
           temperatureC: (data['temperatureC'] as num).toDouble(),
-          motion: (data['motion'] as num).toDouble(),
+          humidity: (data['humidity'] as num?)?.toDouble() ?? 0,
+          motion: (data['motion'] as num?)?.toDouble() ?? 0,
         ),
       );
     } catch (e) {

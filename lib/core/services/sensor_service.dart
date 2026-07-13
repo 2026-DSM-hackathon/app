@@ -24,6 +24,7 @@ class MockSensorService implements SensorService {
   late final Timer _timer;
 
   double _baseTemp = 26;
+  double _baseHumidity = 55;
   final double _occupancyBias = 0.6; // 데모: 탑승 경향
 
   void _emit() {
@@ -36,10 +37,15 @@ class MockSensorService implements SensorService {
     final double motion =
         occupiedNow ? (0.4 + _rnd.nextDouble() * 0.6) : (_rnd.nextDouble() * 0.15);
 
+    // 습도도 완만히 변동.
+    _baseHumidity += (_rnd.nextDouble() - 0.5) * 4;
+    _baseHumidity = _baseHumidity.clamp(30.0, 90.0);
+
     _controller.add(
       SensorReading(
         time: DateTime.now(),
         temperatureC: double.parse(_baseTemp.toStringAsFixed(1)),
+        humidity: double.parse(_baseHumidity.toStringAsFixed(0)),
         motion: double.parse(motion.toStringAsFixed(2)),
       ),
     );

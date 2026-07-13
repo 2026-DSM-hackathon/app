@@ -11,11 +11,10 @@ import '../../widgets/section_header.dart';
 import '../../widgets/status_pill.dart';
 import '../../widgets/trend_chart.dart';
 
-/// 타임라인 기간 필터 인덱스(0=일, 1=주, 2=월)를 보관한다.
+/// 타임라인 기간 필터 인덱스(0=일, 1=주, 2=월).
 class _PeriodNotifier extends Notifier<int> {
   @override
   int build() => 0;
-
   void set(int index) => state = index;
 }
 
@@ -23,42 +22,34 @@ final _periodProvider =
     NotifierProvider<_PeriodNotifier, int>(_PeriodNotifier.new);
 
 // ---------------------------------------------------------------------------
-// 기간별 목업 데이터(6.4). 일(day)의 확률 추이는 실측 이력을 사용하므로 비워 둔다.
+// 기간별 라벨 및 온·습도 목업 (일=실측 사용).
 // ---------------------------------------------------------------------------
 
-const List<String> _weekdayLabels = <String>[
-  '월', '화', '수', '목', '금', '토', '일',
-];
+const List<String> _weekdayLabels = <String>['월', '화', '수', '목', '금', '토', '일'];
 const List<String> _weekOfMonthLabels = <String>['1주', '2주', '3주', '4주'];
 const List<String> _dayHourLabels = <String>['00', '04', '08', '12', '16', '20'];
 
-/// 기간별(일/주/월) 탑승 확률(%) 추이 목업.
-const List<List<double>> _mockProbabilityTrend = <List<double>>[
-  <double>[],
-  <double>[58, 62, 74, 80, 55, 40, 68],
-  <double>[55, 62, 70, 65],
-];
-
-const List<List<String>> _trendLabelsByPeriod = <List<String>>[
-  <String>[],
-  _weekdayLabels,
-  _weekOfMonthLabels,
-];
-
-/// 기간별 이벤트 발생 건수 목업.
-const List<List<double>> _mockEventCounts = <List<double>>[
-  <double>[1, 0, 2, 4, 3, 1],
-  <double>[2, 1, 3, 5, 2, 4, 1],
-  <double>[4, 7, 5, 6],
-];
-
-const List<List<String>> _eventLabelsByPeriod = <List<String>>[
+const List<List<String>> _labelsByPeriod = <List<String>>[
   _dayHourLabels,
   _weekdayLabels,
   _weekOfMonthLabels,
 ];
 
-/// 타임라인(6.4): 기간(일/주/월) 필터 + 탑승 확률 추이 + 이벤트 통계 + 이벤트 로그.
+/// 기간별 온도(°C) 통계 목업.
+const List<List<double>> _mockTemp = <List<double>>[
+  <double>[24, 26, 30, 38, 34, 27],
+  <double>[26, 28, 31, 35, 33, 29, 27],
+  <double>[27, 30, 34, 31],
+];
+
+/// 기간별 습도(%) 통계 목업.
+const List<List<double>> _mockHumidity = <List<double>>[
+  <double>[60, 57, 52, 44, 48, 55],
+  <double>[55, 52, 48, 45, 50, 58, 60],
+  <double>[54, 49, 44, 51],
+];
+
+/// 타임라인(6.4): 기간 필터 + 온·습도 추이 + 온·습도 통계 + 이벤트 로그.
 class TimelineScreen extends ConsumerWidget {
   const TimelineScreen({super.key});
 
@@ -74,17 +65,16 @@ class TimelineScreen extends ConsumerWidget {
           const Text(
             '타임라인',
             style: TextStyle(
-              fontSize: 28,
-              fontWeight: FontWeight.w800,
-              color: AppColors.textPrimary,
-            ),
+                fontSize: 28,
+                fontWeight: FontWeight.w800,
+                color: AppColors.textPrimary),
           ),
           const SizedBox(height: 20),
           _PeriodFilter(period: period),
           const SizedBox(height: 20),
-          _ProbabilityTrendCard(period: period),
+          _TrendCard(period: period),
           const SizedBox(height: 16),
-          _EventStatsCard(period: period),
+          _StatsCard(period: period),
           const SizedBox(height: 16),
           const _EventLogCard(),
         ],
@@ -93,10 +83,8 @@ class TimelineScreen extends ConsumerWidget {
   }
 }
 
-/// 기간 필터 칩(일/주/월).
 class _PeriodFilter extends ConsumerWidget {
   const _PeriodFilter({required this.period});
-
   final int period;
 
   static const List<String> _labels = <String>['일', '주', '월'];
@@ -115,11 +103,9 @@ class _PeriodFilter extends ConsumerWidget {
             backgroundColor: AppColors.surfaceAlt,
             selectedColor: AppColors.primary,
             side: BorderSide(
-              color: period == i ? AppColors.primary : AppColors.divider,
-            ),
+                color: period == i ? AppColors.primary : AppColors.divider),
             shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(AppRadii.pill),
-            ),
+                borderRadius: BorderRadius.circular(AppRadii.pill)),
             labelStyle: TextStyle(
               color: period == i ? Colors.white : AppColors.textSecondary,
               fontWeight: FontWeight.w600,
@@ -132,33 +118,39 @@ class _PeriodFilter extends ConsumerWidget {
   }
 }
 
-/// 탑승 확률 추이 카드. 일(0)은 실측 이력, 주/월은 목업 데이터를 사용한다.
-class _ProbabilityTrendCard extends ConsumerWidget {
-  const _ProbabilityTrendCard({required this.period});
-
+/// 온·습도 추이(라인). 일은 실측 이력, 주/월은 목업.
+class _TrendCard extends ConsumerWidget {
+  const _TrendCard({required this.period});
   final int period;
 
-  static const List<String> _pillLabels = <String>['실시간', '주간', '월간'];
+  static const List<String> _pill = <String>['실시간', '주간', '월간'];
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final List<FlSpot> spots;
-    final List<String>? bottomLabels;
+    List<FlSpot> tempSpots;
+    List<FlSpot> humSpots;
+    List<String>? bottomLabels;
 
     if (period == 0) {
-      final List<InferenceResult> history =
-          ref.watch(monitorProvider).history;
-      spots = <FlSpot>[
-        for (int i = 0; i < history.length; i++)
-          FlSpot(i.toDouble(), history[i].probability * 100),
+      final List<SensorReading> sh = ref.watch(monitorProvider).sensorHistory;
+      tempSpots = <FlSpot>[
+        for (int i = 0; i < sh.length; i++)
+          FlSpot(i.toDouble(), sh[i].temperatureC),
+      ];
+      humSpots = <FlSpot>[
+        for (int i = 0; i < sh.length; i++) FlSpot(i.toDouble(), sh[i].humidity),
       ];
       bottomLabels = null;
     } else {
-      final List<double> mock = _mockProbabilityTrend[period];
-      spots = <FlSpot>[
-        for (int i = 0; i < mock.length; i++) FlSpot(i.toDouble(), mock[i]),
+      final List<double> t = _mockTemp[period];
+      final List<double> h = _mockHumidity[period];
+      tempSpots = <FlSpot>[
+        for (int i = 0; i < t.length; i++) FlSpot(i.toDouble(), t[i]),
       ];
-      bottomLabels = _trendLabelsByPeriod[period];
+      humSpots = <FlSpot>[
+        for (int i = 0; i < h.length; i++) FlSpot(i.toDouble(), h[i]),
+      ];
+      bottomLabels = _labelsByPeriod[period];
     }
 
     return AppCard(
@@ -166,25 +158,31 @@ class _ProbabilityTrendCard extends ConsumerWidget {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: <Widget>[
           SectionHeader(
-            title: '탑승 확률 추이',
-            trailing:
-                StatusPill(label: _pillLabels[period], color: AppColors.teal),
+            title: '온·습도 추이',
+            trailing: StatusPill(label: _pill[period], color: AppColors.teal),
           ),
-          const SizedBox(height: 16),
-          if (spots.length < 2)
+          const SizedBox(height: 10),
+          Row(
+            children: const <Widget>[
+              _LegendDot(color: AppColors.teal, label: '온도 °C'),
+              SizedBox(width: 16),
+              _LegendDot(color: AppColors.blue, label: '습도 %'),
+            ],
+          ),
+          const SizedBox(height: 12),
+          if (tempSpots.length < 2)
             const SizedBox(
               height: 170,
               child: Center(
-                child: Text(
-                  '데이터 수집 중…',
-                  style: TextStyle(color: AppColors.textSecondary),
-                ),
+                child: Text('데이터 수집 중…',
+                    style: TextStyle(color: AppColors.textSecondary)),
               ),
             )
           else
             TrendChart(
               series: <TrendSeries>[
-                TrendSeries(spots: spots, color: AppColors.teal),
+                TrendSeries(spots: tempSpots, color: AppColors.teal),
+                TrendSeries(spots: humSpots, color: AppColors.blue),
               ],
               minY: 0,
               maxY: 100,
@@ -197,53 +195,48 @@ class _ProbabilityTrendCard extends ConsumerWidget {
   }
 }
 
-/// 이벤트 통계 카드: 기간별 이벤트 발생 건수 막대 그래프(피크는 강조색).
-class _EventStatsCard extends StatelessWidget {
-  const _EventStatsCard({required this.period});
-
+/// 온·습도 통계(구간별 막대). 온도(teal)/습도(blue) 그룹 막대.
+class _StatsCard extends StatelessWidget {
+  const _StatsCard({required this.period});
   final int period;
 
   @override
   Widget build(BuildContext context) {
-    final List<double> data = _mockEventCounts[period];
-    final List<String> labels = _eventLabelsByPeriod[period];
-
-    double maxVal = 0;
-    int peakIndex = 0;
-    for (int i = 0; i < data.length; i++) {
-      if (data[i] > maxVal) {
-        maxVal = data[i];
-        peakIndex = i;
-      }
-    }
-    final double maxY = maxVal <= 0 ? 4 : maxVal + 1;
+    final List<double> temp = _mockTemp[period];
+    final List<double> hum = _mockHumidity[period];
+    final List<String> labels = _labelsByPeriod[period];
 
     return AppCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: <Widget>[
-          const SectionHeader(title: '이벤트 통계'),
-          const SizedBox(height: 16),
+          const SectionHeader(title: '온·습도 통계'),
+          const SizedBox(height: 10),
+          Row(
+            children: const <Widget>[
+              _LegendDot(color: AppColors.teal, label: '온도 °C'),
+              SizedBox(width: 16),
+              _LegendDot(color: AppColors.blue, label: '습도 %'),
+            ],
+          ),
+          const SizedBox(height: 12),
           SizedBox(
             height: 150,
             child: BarChart(
               BarChartData(
                 alignment: BarChartAlignment.spaceAround,
-                maxY: maxY,
+                maxY: 100,
                 barTouchData: const BarTouchData(enabled: false),
                 gridData: const FlGridData(show: false),
                 borderData: FlBorderData(show: false),
                 titlesData: FlTitlesData(
                   show: true,
                   topTitles: const AxisTitles(
-                    sideTitles: SideTitles(showTitles: false),
-                  ),
+                      sideTitles: SideTitles(showTitles: false)),
                   rightTitles: const AxisTitles(
-                    sideTitles: SideTitles(showTitles: false),
-                  ),
+                      sideTitles: SideTitles(showTitles: false)),
                   leftTitles: const AxisTitles(
-                    sideTitles: SideTitles(showTitles: false),
-                  ),
+                      sideTitles: SideTitles(showTitles: false)),
                   bottomTitles: AxisTitles(
                     sideTitles: SideTitles(
                       showTitles: true,
@@ -254,30 +247,31 @@ class _EventStatsCard extends StatelessWidget {
                         }
                         return Padding(
                           padding: const EdgeInsets.only(top: 6),
-                          child: Text(
-                            labels[i],
-                            style: const TextStyle(
-                              color: AppColors.textTertiary,
-                              fontSize: 10,
-                            ),
-                          ),
+                          child: Text(labels[i],
+                              style: const TextStyle(
+                                  color: AppColors.textTertiary, fontSize: 10)),
                         );
                       },
                     ),
                   ),
                 ),
                 barGroups: <BarChartGroupData>[
-                  for (int i = 0; i < data.length; i++)
+                  for (int i = 0; i < labels.length; i++)
                     BarChartGroupData(
                       x: i,
+                      barsSpace: 4,
                       barRods: <BarChartRodData>[
                         BarChartRodData(
-                          toY: data[i],
-                          color: i == peakIndex
-                              ? AppColors.orange
-                              : AppColors.green,
-                          width: 14,
-                          borderRadius: BorderRadius.circular(6),
+                          toY: i < temp.length ? temp[i] : 0,
+                          color: AppColors.teal,
+                          width: 8,
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        BarChartRodData(
+                          toY: i < hum.length ? hum[i] : 0,
+                          color: AppColors.blue,
+                          width: 8,
+                          borderRadius: BorderRadius.circular(4),
                         ),
                       ],
                     ),
@@ -291,7 +285,7 @@ class _EventStatsCard extends StatelessWidget {
   }
 }
 
-/// 이벤트 로그 카드: 알림 이력을 최신순으로 나열한다.
+/// 이벤트 로그: 알림 이력을 최신순으로.
 class _EventLogCard extends ConsumerWidget {
   const _EventLogCard();
 
@@ -310,10 +304,8 @@ class _EventLogCard extends ConsumerWidget {
             const Padding(
               padding: EdgeInsets.symmetric(vertical: 24),
               child: Center(
-                child: Text(
-                  '기록된 이벤트가 없어요',
-                  style: TextStyle(color: AppColors.textSecondary),
-                ),
+                child: Text('기록된 이벤트가 없어요',
+                    style: TextStyle(color: AppColors.textSecondary)),
               ),
             )
           else
@@ -327,10 +319,8 @@ class _EventLogCard extends ConsumerWidget {
   }
 }
 
-/// 이벤트 한 건: 심각도 점 + 제목 + 시각.
 class _EventRow extends StatelessWidget {
   const _EventRow({required this.alert});
-
   final AlertEvent alert;
 
   Color get _dotColor => switch (alert.severity) {
@@ -355,17 +345,39 @@ class _EventRow extends StatelessWidget {
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: const TextStyle(
-              color: AppColors.textPrimary,
-              fontSize: 14,
-              fontWeight: FontWeight.w600,
-            ),
+                color: AppColors.textPrimary,
+                fontSize: 14,
+                fontWeight: FontWeight.w600),
           ),
         ),
         const SizedBox(width: 8),
-        Text(
-          formatTimeKo(alert.time),
-          style: const TextStyle(color: AppColors.textTertiary, fontSize: 12),
+        Text(formatTimeKo(alert.time),
+            style:
+                const TextStyle(color: AppColors.textTertiary, fontSize: 12)),
+      ],
+    );
+  }
+}
+
+class _LegendDot extends StatelessWidget {
+  const _LegendDot({required this.color, required this.label});
+  final Color color;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: <Widget>[
+        Container(
+          width: 10,
+          height: 10,
+          decoration: BoxDecoration(color: color, shape: BoxShape.circle),
         ),
+        const SizedBox(width: 6),
+        Text(label,
+            style:
+                const TextStyle(color: AppColors.textSecondary, fontSize: 12)),
       ],
     );
   }

@@ -49,6 +49,13 @@ const List<List<double>> _mockHumidity = <List<double>>[
   <double>[54, 49, 44, 51],
 ];
 
+/// 기간별 CO2(ppm) 통계 목업(일=실측 사용, 주/월 목업).
+const List<List<double>> _mockCo2 = <List<double>>[
+  <double>[520, 610, 780, 1250, 900, 640],
+  <double>[700, 820, 1100, 1500, 1300, 950, 780],
+  <double>[760, 980, 1400, 1050],
+];
+
 /// 타임라인(6.4): 기간 필터 + 온·습도 추이 + 온·습도 통계 + 이벤트 로그.
 class TimelineScreen extends ConsumerWidget {
   const TimelineScreen({super.key});
@@ -75,6 +82,10 @@ class TimelineScreen extends ConsumerWidget {
           _TrendCard(period: period),
           const SizedBox(height: 16),
           _StatsCard(period: period),
+          const SizedBox(height: 16),
+          _Co2TrendCard(period: period),
+          const SizedBox(height: 16),
+          _Co2StatsCard(period: period),
           const SizedBox(height: 16),
           const _EventLogCard(),
         ],
@@ -281,6 +292,216 @@ class _StatsCard extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+/// CO2 추이(라인, 전용 ppm 축). 일은 실측 이력, 주/월은 목업.
+class _Co2TrendCard extends ConsumerWidget {
+  const _Co2TrendCard({required this.period});
+  final int period;
+
+  static const List<String> _pill = <String>['실시간', '주간', '월간'];
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    List<FlSpot> spots;
+    List<String>? bottomLabels;
+    double current;
+
+    if (period == 0) {
+      final List<SensorReading> sh = ref.watch(monitorProvider).sensorHistory;
+      spots = <FlSpot>[
+        for (int i = 0; i < sh.length; i++) FlSpot(i.toDouble(), sh[i].co2),
+      ];
+      current = sh.isEmpty ? 0 : sh.last.co2;
+      bottomLabels = null;
+    } else {
+      final List<double> c = _mockCo2[period];
+      spots = <FlSpot>[
+        for (int i = 0; i < c.length; i++) FlSpot(i.toDouble(), c[i]),
+      ];
+      current = c.isEmpty ? 0 : c.last;
+      bottomLabels = _labelsByPeriod[period];
+    }
+
+    double peak = 0;
+    for (final FlSpot s in spots) {
+      if (s.y > peak) peak = s.y;
+    }
+    final double maxY = peak < 1600 ? 1600 : (peak / 400).ceil() * 400;
+    final AirQuality quality = current.airQuality;
+    final Color color = quality.color;
+
+    return AppCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          SectionHeader(
+            title: 'CO₂ 추이',
+            trailing: StatusPill(label: _pill[period], color: AppColors.teal),
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: <Widget>[
+              _LegendDot(color: color, label: 'CO₂ ppm'),
+              const Spacer(),
+              Text(
+                '현재 ${current.toStringAsFixed(0)} ppm · ${quality.label}',
+                style: TextStyle(
+                    color: color, fontSize: 13, fontWeight: FontWeight.w700),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          if (spots.length < 2)
+            const SizedBox(
+              height: 170,
+              child: Center(
+                child: Text('데이터 수집 중…',
+                    style: TextStyle(color: AppColors.textSecondary)),
+              ),
+            )
+          else
+            TrendChart(
+              series: <TrendSeries>[TrendSeries(spots: spots, color: color)],
+              minY: 400,
+              maxY: maxY,
+              leftInterval: 400,
+              bottomLabels: bottomLabels,
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+/// CO2 통계: 요약(평균/최고/최저) + 구간별 막대(등급별 색상).
+class _Co2StatsCard extends StatelessWidget {
+  const _Co2StatsCard({required this.period});
+  final int period;
+
+  @override
+  Widget build(BuildContext context) {
+    final List<double> co2 = _mockCo2[period];
+    final List<String> labels = _labelsByPeriod[period];
+
+    double peak = 0;
+    double avg = 0;
+    double mn = co2.isEmpty ? 0 : co2.first;
+    for (final double v in co2) {
+      avg += v;
+      if (v > peak) peak = v;
+      if (v < mn) mn = v;
+    }
+    avg = co2.isEmpty ? 0 : avg / co2.length;
+    final double maxY = peak < 1600 ? 1600 : (peak / 400).ceil() * 400;
+
+    return AppCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          const SectionHeader(title: 'CO₂ 통계'),
+          const SizedBox(height: 14),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: <Widget>[
+              _SummaryStat(label: '평균', value: avg),
+              _SummaryStat(label: '최고', value: peak),
+              _SummaryStat(label: '최저', value: mn),
+            ],
+          ),
+          const SizedBox(height: 18),
+          SizedBox(
+            height: 150,
+            child: BarChart(
+              BarChartData(
+                alignment: BarChartAlignment.spaceAround,
+                maxY: maxY,
+                barTouchData: const BarTouchData(enabled: false),
+                gridData: const FlGridData(show: false),
+                borderData: FlBorderData(show: false),
+                titlesData: FlTitlesData(
+                  show: true,
+                  topTitles: const AxisTitles(
+                      sideTitles: SideTitles(showTitles: false)),
+                  rightTitles: const AxisTitles(
+                      sideTitles: SideTitles(showTitles: false)),
+                  leftTitles: const AxisTitles(
+                      sideTitles: SideTitles(showTitles: false)),
+                  bottomTitles: AxisTitles(
+                    sideTitles: SideTitles(
+                      showTitles: true,
+                      getTitlesWidget: (double v, TitleMeta meta) {
+                        final int i = v.toInt();
+                        if (i < 0 || i >= labels.length) {
+                          return const SizedBox.shrink();
+                        }
+                        return Padding(
+                          padding: const EdgeInsets.only(top: 6),
+                          child: Text(labels[i],
+                              style: const TextStyle(
+                                  color: AppColors.textTertiary, fontSize: 10)),
+                        );
+                      },
+                    ),
+                  ),
+                ),
+                barGroups: <BarChartGroupData>[
+                  for (int i = 0; i < co2.length; i++)
+                    BarChartGroupData(
+                      x: i,
+                      barRods: <BarChartRodData>[
+                        BarChartRodData(
+                          toY: co2[i],
+                          color: co2[i].airQuality.color,
+                          width: 14,
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                      ],
+                    ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// CO2 요약 통계 1칸(평균/최고/최저).
+class _SummaryStat extends StatelessWidget {
+  const _SummaryStat({required this.label, required this.value});
+  final String label;
+  final double value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: <Widget>[
+        Text(label,
+            style:
+                const TextStyle(color: AppColors.textSecondary, fontSize: 12)),
+        const SizedBox(height: 6),
+        RichText(
+          text: TextSpan(
+            children: <TextSpan>[
+              TextSpan(
+                text: value.toStringAsFixed(0),
+                style: TextStyle(
+                    color: value.airQuality.color,
+                    fontSize: 20,
+                    fontWeight: FontWeight.w800),
+              ),
+              const TextSpan(
+                text: ' ppm',
+                style: TextStyle(color: AppColors.textTertiary, fontSize: 12),
+              ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 }

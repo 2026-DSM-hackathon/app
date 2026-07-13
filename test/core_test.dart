@@ -13,12 +13,14 @@ SensorReading _reading({
   required DateTime time,
   double temperatureC = 25,
   double humidity = 50,
+  double co2 = 500,
   double motion = 0,
 }) =>
     SensorReading(
       time: time,
       temperatureC: temperatureC,
       humidity: humidity,
+      co2: co2,
       motion: motion,
     );
 
@@ -113,18 +115,41 @@ void main() {
       expect(container.read(alertsProvider), isEmpty);
     });
 
-    test('데이터 소스 전환/ESP 주소/BLE 목업 설정이 반영된다', () {
+    test('CO2 임계값 초과 시 경고 알림이 발생한다', () {
+      final DateTime t = DateTime(2026, 7, 13, 12);
+      container.read(alertsProvider.notifier).evaluate(
+            reading: _reading(time: t, temperatureC: 24, co2: 1800),
+            result: InferenceResult(
+                time: t, probability: 0.1, source: InferenceSource.fallback),
+            occupiedSince: null,
+            settings: const SettingsState(),
+          );
+      final List<AlertEvent> alerts = container.read(alertsProvider);
+      expect(alerts, hasLength(1));
+      expect(alerts.first.type, AlertType.highCo2);
+      expect(alerts.first.severity, AlertSeverity.warning);
+    });
+
+    test('데이터 소스 전환/ESP 주소/MQTT 설정이 반영된다', () {
       final SettingsNotifier notifier =
           container.read(settingsProvider.notifier);
       notifier.setSensorSource(SensorDataSource.esp);
       notifier.setEspBaseUrl('http://10.0.2.2:8080');
-      notifier.setUseMockBle(true);
 
-      final SettingsState s = container.read(settingsProvider);
-      expect(s.sensorSource, SensorDataSource.esp);
-      expect(s.espBaseUrl, 'http://10.0.2.2:8080');
-      expect(s.useMockBle, isTrue);
-      expect(container.read(blePairingIsMockProvider), isTrue);
+      final SettingsState s1 = container.read(settingsProvider);
+      expect(s1.sensorSource, SensorDataSource.esp);
+      expect(s1.espBaseUrl, 'http://10.0.2.2:8080');
+
+      notifier.setSensorSource(SensorDataSource.mqtt);
+      notifier.setMqttHost('broker.example.com');
+      notifier.setMqttPort(8883);
+      notifier.setDeviceSerial('SAVEIN-TEST');
+
+      final SettingsState s2 = container.read(settingsProvider);
+      expect(s2.sensorSource, SensorDataSource.mqtt);
+      expect(s2.mqttHost, 'broker.example.com');
+      expect(s2.mqttPort, 8883);
+      expect(s2.deviceSerial, 'SAVEIN-TEST');
     });
   });
 }

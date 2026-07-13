@@ -42,6 +42,18 @@ class SettingsScreen extends ConsumerWidget {
                   ),
                   const SizedBox(height: 8),
                   _ThresholdSlider(
+                    label: 'CO₂ 임계값',
+                    valueLabel:
+                        '${settings.co2ThresholdPpm.toStringAsFixed(0)}ppm',
+                    value: settings.co2ThresholdPpm,
+                    min: 800,
+                    max: 2500,
+                    divisions: 17,
+                    onChanged: (double v) =>
+                        ref.read(settingsProvider.notifier).setCo2Threshold(v),
+                  ),
+                  const SizedBox(height: 8),
+                  _ThresholdSlider(
                     label: '장시간 탑승 임계값',
                     valueLabel:
                         '${(settings.elapsedThresholdSec / 60).toStringAsFixed(1)}분',
@@ -562,10 +574,10 @@ class _NotificationCard extends ConsumerWidget {
   }
 }
 
-/// 데이터 소스 카드: 센서 소스(목업/ESP 서버) 전환 + ESP 주소 + BLE 목업 스위치.
+/// 데이터 소스 카드: 센서 소스(목업/ESP/MQTT) 전환 + 소스별 설정.
 ///
-/// TODO(esp): ESP 보드 펌웨어 확정 시 응답 스키마
-///  (GET {주소}/api/sensor → {"temperatureC": 27.5, "motion": 0.42}) 조정.
+/// MQTT: savein/{시리얼}/telemetry|event|status|sync|cmd 로 하드웨어와 통신.
+/// TODO(fw): telemetry/cmd JSON 스키마는 임시 가안(§5·§5.1 확정 시 조정).
 class _DataSourceCard extends ConsumerWidget {
   const _DataSourceCard({required this.settings});
 
@@ -573,7 +585,9 @@ class _DataSourceCard extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final bool bleMock = ref.watch(blePairingIsMockProvider);
+    final bool isEsp = settings.sensorSource == SensorDataSource.esp;
+    final bool isMqtt = settings.sensorSource == SensorDataSource.mqtt;
+    final SettingsNotifier notifier = ref.read(settingsProvider.notifier);
 
     return AppCard(
       child: Column(
@@ -596,9 +610,7 @@ class _DataSourceCard extends ConsumerWidget {
                   label: Text(source.label),
                   selected: settings.sensorSource == source,
                   showCheckmark: false,
-                  onSelected: (_) => ref
-                      .read(settingsProvider.notifier)
-                      .setSensorSource(source),
+                  onSelected: (_) => notifier.setSensorSource(source),
                   backgroundColor: AppColors.surfaceAlt,
                   selectedColor: AppColors.primary,
                   side: BorderSide.none,
@@ -615,104 +627,223 @@ class _DataSourceCard extends ConsumerWidget {
                 ),
             ],
           ),
-          const SizedBox(height: 14),
-          Row(
-            children: <Widget>[
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: <Widget>[
-                    const Text(
-                      'ESP 서버 주소',
-                      style: TextStyle(
-                          color: AppColors.textSecondary, fontSize: 12),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      settings.espBaseUrl,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: AppColors.textPrimary,
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ],
-                ),
+          if (isEsp) ...<Widget>[
+            const SizedBox(height: 14),
+            _SourceValueRow(
+              label: 'ESP 서버 주소',
+              value: settings.espBaseUrl,
+              tooltip: 'ESP 주소 수정',
+              onEdit: () => _editField(
+                context,
+                title: 'ESP 서버 주소',
+                hint: '예: http://192.168.0.42',
+                initial: settings.espBaseUrl,
+                keyboardType: TextInputType.url,
+                onSave: notifier.setEspBaseUrl,
               ),
-              IconButton(
-                tooltip: 'ESP 주소 수정',
-                onPressed: () => showDialog<void>(
-                  context: context,
-                  builder: (_) => _EditUrlDialog(
-                    initial: settings.espBaseUrl,
-                    onSave: (String url) =>
-                        ref.read(settingsProvider.notifier).setEspBaseUrl(url),
-                  ),
-                ),
-                icon: const Icon(Icons.edit_outlined,
-                    color: AppColors.textSecondary, size: 20),
+            ),
+          ],
+          if (isMqtt) ...<Widget>[
+            const SizedBox(height: 14),
+            _SourceValueRow(
+              label: 'MQTT 브로커',
+              value: '${settings.mqttHost}:${settings.mqttPort}',
+              tooltip: '브로커 수정',
+              onEdit: () => _editField(
+                context,
+                title: 'MQTT 브로커 호스트',
+                hint: '예: test.mosquitto.org',
+                initial: settings.mqttHost,
+                keyboardType: TextInputType.url,
+                onSave: notifier.setMqttHost,
               ),
-            ],
-          ),
-          const Divider(color: AppColors.divider, height: 20),
-          Row(
-            children: <Widget>[
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: <Widget>[
-                    const Text(
-                      '목업 BLE 스캔',
-                      style: TextStyle(
-                        color: AppColors.textPrimary,
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      bleMock
-                          ? '현재 목업 스캔으로 동작해요 (에뮬레이터/미지원 기기)'
-                          : '실제 BLE 스캔을 사용 중이에요',
-                      style: const TextStyle(
-                          color: AppColors.textTertiary, fontSize: 11),
-                    ),
-                  ],
-                ),
+            ),
+            const Divider(color: AppColors.divider, height: 20),
+            _SourceValueRow(
+              label: '포트',
+              value: '${settings.mqttPort}',
+              tooltip: '포트 수정',
+              onEdit: () => _editField(
+                context,
+                title: 'MQTT 포트',
+                hint: '평문 1883 / TLS 8883',
+                initial: '${settings.mqttPort}',
+                keyboardType: TextInputType.number,
+                onSave: (String v) {
+                  final int? p = int.tryParse(v.trim());
+                  if (p != null && p > 0 && p < 65536) notifier.setMqttPort(p);
+                },
               ),
-              Switch(
-                value: settings.useMockBle,
-                activeThumbColor: AppColors.primary,
-                onChanged: (bool v) =>
-                    ref.read(settingsProvider.notifier).setUseMockBle(v),
+            ),
+            const Divider(color: AppColors.divider, height: 20),
+            _SourceValueRow(
+              label: '기기 시리얼 넘버',
+              value: settings.deviceSerial,
+              tooltip: '시리얼 수정',
+              onEdit: () => _editField(
+                context,
+                title: '기기 시리얼 넘버',
+                hint: '예: SAVEIN-0001',
+                initial: settings.deviceSerial,
+                onSave: notifier.setDeviceSerial,
               ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          const Text(
-            'ESP 보드: GET {주소}/api/sensor → {"temperatureC","motion"} · 펌웨어 확정 후 조정',
-            style: TextStyle(color: AppColors.textTertiary, fontSize: 11),
+            ),
+            const SizedBox(height: 12),
+            const _MqttStatusRow(),
+          ],
+          const SizedBox(height: 10),
+          Text(
+            isMqtt
+                ? '토픽: savein/${settings.deviceSerial}/telemetry · event · status · sync · cmd (§5 스키마 확정 시 조정)'
+                : 'ESP 보드: GET {주소}/api/sensor → {"temperatureC","humidity","co2","motion"} · 펌웨어 확정 후 조정',
+            style: const TextStyle(color: AppColors.textTertiary, fontSize: 11),
           ),
         ],
       ),
     );
   }
+
+  void _editField(
+    BuildContext context, {
+    required String title,
+    required String hint,
+    required String initial,
+    required ValueChanged<String> onSave,
+    TextInputType? keyboardType,
+  }) {
+    showDialog<void>(
+      context: context,
+      builder: (_) => _EditFieldDialog(
+        title: title,
+        hint: hint,
+        initial: initial,
+        keyboardType: keyboardType,
+        onSave: onSave,
+      ),
+    );
+  }
 }
 
-/// ESP 서버 주소 수정 다이얼로그.
-class _EditUrlDialog extends StatefulWidget {
-  const _EditUrlDialog({required this.initial, required this.onSave});
+/// 라벨 + 현재 값 + 수정 버튼(데이터 소스 설정 공용 행).
+class _SourceValueRow extends StatelessWidget {
+  const _SourceValueRow({
+    required this.label,
+    required this.value,
+    required this.tooltip,
+    required this.onEdit,
+  });
 
-  final String initial;
-  final ValueChanged<String> onSave;
+  final String label;
+  final String value;
+  final String tooltip;
+  final VoidCallback onEdit;
 
   @override
-  State<_EditUrlDialog> createState() => _EditUrlDialogState();
+  Widget build(BuildContext context) {
+    return Row(
+      children: <Widget>[
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              Text(
+                label,
+                style: const TextStyle(
+                    color: AppColors.textSecondary, fontSize: 12),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                value,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: AppColors.textPrimary,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+        ),
+        IconButton(
+          tooltip: tooltip,
+          onPressed: onEdit,
+          icon: const Icon(Icons.edit_outlined,
+              color: AppColors.textSecondary, size: 20),
+        ),
+      ],
+    );
+  }
 }
 
-class _EditUrlDialogState extends State<_EditUrlDialog> {
+/// MQTT 링크 상태 행: 브로커 연결 + POD 온라인 여부(pill 2개).
+class _MqttStatusRow extends ConsumerWidget {
+  const _MqttStatusRow();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final l = ref.watch(mqttLinkProvider).asData?.value;
+    final bool broker = l?.brokerConnected ?? false;
+    final PodConnection pod = l?.pod ?? PodConnection.unknown;
+    final String? error = l?.error;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        Row(
+          children: <Widget>[
+            StatusPill(
+              label: broker ? '브로커 연결됨' : '브로커 연결 중…',
+              color: broker ? AppColors.teal : AppColors.orange,
+              icon: broker ? Icons.cloud_done_outlined : Icons.cloud_sync_outlined,
+            ),
+            const SizedBox(width: 8),
+            StatusPill(
+              label: 'POD ${pod.label}',
+              color: switch (pod) {
+                PodConnection.online => AppColors.green,
+                PodConnection.offline => AppColors.red,
+                PodConnection.unknown => AppColors.textTertiary,
+              },
+              icon: Icons.sensors,
+            ),
+          ],
+        ),
+        if (error != null) ...<Widget>[
+          const SizedBox(height: 6),
+          Text(
+            '연결 오류: $error',
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(color: AppColors.red, fontSize: 11),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+/// 데이터 소스 값(주소/호스트/포트/시리얼) 수정 다이얼로그.
+class _EditFieldDialog extends StatefulWidget {
+  const _EditFieldDialog({
+    required this.title,
+    required this.hint,
+    required this.initial,
+    required this.onSave,
+    this.keyboardType,
+  });
+
+  final String title;
+  final String hint;
+  final String initial;
+  final ValueChanged<String> onSave;
+  final TextInputType? keyboardType;
+
+  @override
+  State<_EditFieldDialog> createState() => _EditFieldDialogState();
+}
+
+class _EditFieldDialogState extends State<_EditFieldDialog> {
   late final TextEditingController _controller =
       TextEditingController(text: widget.initial);
 
@@ -723,11 +854,9 @@ class _EditUrlDialogState extends State<_EditUrlDialog> {
   }
 
   void _save() {
-    final String url = _controller.text.trim();
-    if (url.isEmpty) {
-      return;
-    }
-    widget.onSave(url);
+    final String v = _controller.text.trim();
+    if (v.isEmpty) return;
+    widget.onSave(v);
     Navigator.of(context).pop();
   }
 
@@ -738,22 +867,22 @@ class _EditUrlDialogState extends State<_EditUrlDialog> {
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(AppRadii.card),
       ),
-      title: const Text(
-        'ESP 서버 주소',
-        style: TextStyle(color: AppColors.textPrimary),
+      title: Text(
+        widget.title,
+        style: const TextStyle(color: AppColors.textPrimary),
       ),
       content: TextField(
         controller: _controller,
         autofocus: true,
-        keyboardType: TextInputType.url,
+        keyboardType: widget.keyboardType,
         style: const TextStyle(color: AppColors.textPrimary),
-        decoration: const InputDecoration(
-          labelText: '예: http://192.168.0.42',
-          labelStyle: TextStyle(color: AppColors.textSecondary),
-          enabledBorder: UnderlineInputBorder(
+        decoration: InputDecoration(
+          labelText: widget.hint,
+          labelStyle: const TextStyle(color: AppColors.textSecondary),
+          enabledBorder: const UnderlineInputBorder(
             borderSide: BorderSide(color: AppColors.divider),
           ),
-          focusedBorder: UnderlineInputBorder(
+          focusedBorder: const UnderlineInputBorder(
             borderSide: BorderSide(color: AppColors.primary),
           ),
         ),

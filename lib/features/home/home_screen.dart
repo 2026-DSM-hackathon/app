@@ -32,6 +32,7 @@ class HomeScreen extends ConsumerWidget {
     final bool occupied = monitor.occupied;
     final double temp = monitor.temperatureC;
     final double humidity = monitor.humidity;
+    final double co2 = monitor.co2;
     final bool hot = temp >= settings.tempThresholdC;
 
     final List<Widget> statCards = <Widget>[
@@ -48,6 +49,13 @@ class HomeScreen extends ConsumerWidget {
         unit: '%',
         icon: Icons.water_drop_rounded,
         accent: AppColors.blue,
+      ),
+      StatCard(
+        title: 'CO₂',
+        value: co2.toStringAsFixed(0),
+        unit: 'ppm',
+        icon: Icons.co2_rounded,
+        accent: co2.airQuality.color,
       ),
       StatCard(
         title: '탑승 상태',
@@ -83,7 +91,7 @@ class HomeScreen extends ConsumerWidget {
                 ref.read(monitorProvider.notifier).setOccupied(v),
           ),
           const SizedBox(height: 16),
-          // 기종 반응형: 넓은 화면은 4열, 좁은 화면은 2x2 (IntrinsicHeight 로 높이 정렬).
+          // 기종 반응형: 넓은 화면은 한 줄, 좁은 화면은 2열(홀수면 마지막 칸 비움).
           LayoutBuilder(
             builder: (BuildContext context, BoxConstraints c) {
               if (c.maxWidth >= Breakpoints.wideStats) {
@@ -99,35 +107,33 @@ class HomeScreen extends ConsumerWidget {
                   ),
                 );
               }
-              return Column(
-                children: <Widget>[
+              final List<Widget> rows = <Widget>[];
+              for (int i = 0; i < statCards.length; i += 2) {
+                if (rows.isNotEmpty) rows.add(const SizedBox(height: 12));
+                rows.add(
                   IntrinsicHeight(
                     child: Row(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: <Widget>[
-                        Expanded(child: statCards[0]),
+                        Expanded(child: statCards[i]),
                         const SizedBox(width: 12),
-                        Expanded(child: statCards[1]),
+                        Expanded(
+                          child: i + 1 < statCards.length
+                              ? statCards[i + 1]
+                              : const SizedBox.shrink(),
+                        ),
                       ],
                     ),
                   ),
-                  const SizedBox(height: 12),
-                  IntrinsicHeight(
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: <Widget>[
-                        Expanded(child: statCards[2]),
-                        const SizedBox(width: 12),
-                        Expanded(child: statCards[3]),
-                      ],
-                    ),
-                  ),
-                ],
-              );
+                );
+              }
+              return Column(children: rows);
             },
           ),
           const SizedBox(height: 22),
           _TrendCard(monitor: monitor),
+          const SizedBox(height: 16),
+          _Co2TrendCard(monitor: monitor),
         ],
       ),
     );
@@ -276,7 +282,7 @@ class _PrimaryCard extends StatelessWidget {
                     ),
                     const SizedBox(height: 6),
                     Text(
-                      '실내 온도 ${monitor.temperatureC.toStringAsFixed(1)}°C · 습도 ${monitor.humidity.toStringAsFixed(0)}%',
+                      '실내 ${monitor.temperatureC.toStringAsFixed(1)}°C · 습도 ${monitor.humidity.toStringAsFixed(0)}% · CO₂ ${monitor.co2.toStringAsFixed(0)}ppm',
                       style: TextStyle(
                           color:
                               hot ? AppColors.orange : AppColors.textTertiary,
@@ -351,6 +357,68 @@ class _TrendCard extends StatelessWidget {
               minY: 0,
               maxY: 100,
               leftInterval: 25,
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+/// CO2 추이 카드(전용 ppm 축). 온·습도와 스케일이 달라 별도 차트로 분리.
+class _Co2TrendCard extends StatelessWidget {
+  const _Co2TrendCard({required this.monitor});
+  final MonitorState monitor;
+
+  @override
+  Widget build(BuildContext context) {
+    final List<SensorReading> sh = monitor.sensorHistory;
+    final List<FlSpot> spots = <FlSpot>[
+      for (int i = 0; i < sh.length; i++) FlSpot(i.toDouble(), sh[i].co2),
+    ];
+    double peak = 0;
+    for (final FlSpot s in spots) {
+      if (s.y > peak) peak = s.y;
+    }
+    // y축 상단: 최소 1600, 그 이상이면 400 단위로 올림.
+    final double maxY = peak < 1600 ? 1600 : (peak / 400).ceil() * 400;
+    final AirQuality quality = monitor.co2.airQuality;
+    final Color color = quality.color;
+
+    return AppCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          SectionHeader(
+            title: 'CO₂ 추이',
+            trailing: StatusPill(label: quality.label, color: color),
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: <Widget>[
+              _LegendDot(color: color, label: 'CO₂ ppm'),
+              const Spacer(),
+              Text(
+                '현재 ${monitor.co2.toStringAsFixed(0)} ppm',
+                style: TextStyle(
+                    color: color, fontSize: 13, fontWeight: FontWeight.w700),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          if (spots.length < 2)
+            const SizedBox(
+              height: 170,
+              child: Center(
+                child: Text('데이터 수집 중…',
+                    style: TextStyle(color: AppColors.textSecondary)),
+              ),
+            )
+          else
+            TrendChart(
+              series: <TrendSeries>[TrendSeries(spots: spots, color: color)],
+              minY: 400,
+              maxY: maxY,
+              leftInterval: 400,
             ),
         ],
       ),

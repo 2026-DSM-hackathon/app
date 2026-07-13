@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../core/models.dart';
+
 /// 앱 전역 색상 토큰. 참조 디자인(다크 대시보드)에서 추출한 값.
 abstract final class AppColors {
   // 배경 계층
@@ -77,4 +79,13 @@ abstract final class AppRadii {
   static const double card = 22;
   static const double stat = 16;
   static const double pill = 999;
+}
+
+/// CO2 공기질 등급 → 색상(위젯/차트 공용).
+extension AirQualityColor on AirQuality {
+  Color get color => switch (this) {
+        AirQuality.good => AppColors.green,
+        AirQuality.moderate => AppColors.orange,
+        AirQuality.poor => AppColors.red,
+      };
 }

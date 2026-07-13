@@ -7,22 +7,54 @@ class SensorReading {
     required this.time,
     required this.temperatureC,
     required this.humidity,
+    required this.co2,
     required this.motion,
   });
 
   final DateTime time;
   final double temperatureC; // 섭씨
   final double humidity; // 상대습도 %
+  final double co2; // CO2 농도 ppm
   final double motion; // 0.0 ~ 1.0 (움직임 강도)
 }
 
-/// 센서 데이터 소스(ESP 보드 서버 연동 대비).
-enum SensorDataSource { mock, esp }
+/// CO2 공기질 등급(실내 기준 근사값). 위젯/차트 색상에 사용.
+enum AirQuality { good, moderate, poor }
+
+extension Co2AirQuality on double {
+  /// ppm → 공기질 등급. 800/1500 ppm 기준(임시값, 펌웨어/기준 확정 시 조정).
+  AirQuality get airQuality => this >= 1500
+      ? AirQuality.poor
+      : (this >= 800 ? AirQuality.moderate : AirQuality.good);
+}
+
+extension AirQualityLabel on AirQuality {
+  String get label => switch (this) {
+        AirQuality.good => '쾌적',
+        AirQuality.moderate => '보통',
+        AirQuality.poor => '나쁨',
+      };
+}
+
+/// 센서 데이터 소스(목업 ↔ ESP HTTP ↔ MQTT 시리얼 통신).
+enum SensorDataSource { mock, esp, mqtt }
 
 extension SensorDataSourceLabel on SensorDataSource {
   String get label => switch (this) {
         SensorDataSource.mock => '목업 데이터',
         SensorDataSource.esp => 'ESP 서버',
+        SensorDataSource.mqtt => 'MQTT(시리얼)',
+      };
+}
+
+/// 기기(POD)의 온라인 상태 — MQTT `status` 토픽/LWT 기준.
+enum PodConnection { unknown, online, offline }
+
+extension PodConnectionLabel on PodConnection {
+  String get label => switch (this) {
+        PodConnection.unknown => '확인 중',
+        PodConnection.online => '온라인',
+        PodConnection.offline => '오프라인',
       };
 }
 
@@ -52,6 +84,7 @@ enum AlertSeverity { info, warning, critical }
 enum AlertType {
   occupancyDetected,
   highTemperature,
+  highCo2,
   prolongedOccupancy,
   deviceOffline,
 }

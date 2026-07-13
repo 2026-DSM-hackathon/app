@@ -648,7 +648,7 @@ class _DeviceTile extends StatelessWidget {
             radius: 18,
             backgroundColor: AppColors.surfaceAlt,
             child: Icon(
-              Icons.bluetooth,
+              Icons.sensors,
               size: 18,
               color: AppColors.textSecondary,
             ),
@@ -668,7 +668,9 @@ class _DeviceTile extends StatelessWidget {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  device.sensorType.label,
+                  '${device.sensorType.label} · ${device.id}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
                     color: AppColors.textSecondary,
                     fontSize: 12,

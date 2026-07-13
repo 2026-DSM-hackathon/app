@@ -109,7 +109,7 @@ class _AppShellState extends ConsumerState<AppShell> {
                   ),
                 ),
                 const SizedBox(height: 8),
-                _sheetItem(ctx, Icons.bluetooth, '기기 페어링',
+                _sheetItem(ctx, Icons.sensors, '기기 연결(시리얼)',
                     () => _push(context, const PairingScreen())),
                 _sheetItem(ctx, Icons.warning_amber_rounded, '데모 경보 발생',
                     () => ref.read(alertsProvider.notifier).triggerDemoCritical()),

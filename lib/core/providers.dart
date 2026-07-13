@@ -1,33 +1,66 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'models.dart';
-import 'services/ble_pairing_service.dart';
 import 'services/esp_sensor_service.dart';
-import 'services/flutter_blue_pairing_service.dart';
 import 'services/inference_service.dart';
+import 'services/mqtt_service.dart';
 import 'services/notification_service.dart';
 import 'services/sensor_service.dart';
 
 // ---------------------------------------------------------------------------
-// 서비스 프로바이더 — 데이터 소스는 설정에서 전환한다(목업 ↔ ESP 서버 ↔ BLE)
+// 서비스 프로바이더 — 데이터 소스는 설정에서 전환한다(목업 ↔ ESP 서버 ↔ MQTT)
 // ---------------------------------------------------------------------------
 
-/// 센서 소스: 설정의 데이터 소스에 따라 목업/ESP HTTP 폴링을 사용한다.
+/// MQTT 서비스: 데이터 소스가 MQTT 일 때만 브로커에 연결한다(아니면 null).
+///
+/// 브로커 host/port 또는 기기 시리얼이 바뀌면 프로바이더가 재생성되어 재연결한다.
+final mqttServiceProvider = Provider<MqttSensorService?>((ref) {
+  final SensorDataSource source =
+      ref.watch(settingsProvider.select((s) => s.sensorSource));
+  if (source != SensorDataSource.mqtt) return null;
+
+  final String host = ref.watch(settingsProvider.select((s) => s.mqttHost));
+  final int port = ref.watch(settingsProvider.select((s) => s.mqttPort));
+  final String serial =
+      ref.watch(settingsProvider.select((s) => s.deviceSerial));
+
+  final MqttSensorService service =
+      MqttSensorService(host: host, port: port, serial: serial);
+  // 위젯 빌드 도중 부수효과(연결 시작)가 발생하지 않도록 다음 마이크로태스크로 미룬다.
+  Future<void>.microtask(service.connect);
+  ref.onDispose(service.dispose);
+  return service;
+});
+
+/// MQTT 링크 상태(브로커/POD). 데이터 소스가 MQTT 가 아니면 빈 스트림(대기).
+final mqttLinkProvider = StreamProvider<MqttLink>((ref) {
+  final MqttSensorService? s = ref.watch(mqttServiceProvider);
+  if (s == null) return const Stream<MqttLink>.empty();
+  return s.linkStream();
+});
+
+/// 센서 소스: 설정의 데이터 소스에 따라 목업/ESP HTTP/MQTT 를 사용한다.
 final sensorServiceProvider = Provider<SensorService>((ref) {
   final SensorDataSource source =
       ref.watch(settingsProvider.select((s) => s.sensorSource));
-  final String espUrl =
-      ref.watch(settingsProvider.select((s) => s.espBaseUrl));
 
-  final SensorService service = switch (source) {
-    SensorDataSource.mock => MockSensorService(),
-    SensorDataSource.esp => EspSensorService(baseUrl: espUrl),
-  };
-  ref.onDispose(service.dispose);
-  return service;
+  switch (source) {
+    case SensorDataSource.mock:
+      final MockSensorService s = MockSensorService();
+      ref.onDispose(s.dispose);
+      return s;
+    case SensorDataSource.esp:
+      final String espUrl =
+          ref.watch(settingsProvider.select((s) => s.espBaseUrl));
+      final EspSensorService s = EspSensorService(baseUrl: espUrl);
+      ref.onDispose(s.dispose);
+      return s;
+    case SensorDataSource.mqtt:
+      // 수명은 mqttServiceProvider 가 소유하므로 여기서 dispose 하지 않는다.
+      return ref.watch(mqttServiceProvider)!;
+  }
 });
 
 final sensorStreamProvider = StreamProvider<SensorReading>((ref) {
@@ -40,23 +73,6 @@ final inferenceEngineProvider =
 final notificationServiceProvider =
     Provider<NotificationService>((ref) => MockNotificationService());
 
-/// 이 플랫폼/설정에서 BLE 페어링이 목업으로 동작하는지.
-final blePairingIsMockProvider = Provider<bool>((ref) {
-  final bool forceMock =
-      ref.watch(settingsProvider.select((s) => s.useMockBle));
-  final bool supported = !kIsWeb &&
-      (defaultTargetPlatform == TargetPlatform.android ||
-          defaultTargetPlatform == TargetPlatform.iOS);
-  return forceMock || !supported;
-});
-
-/// BLE 페어링: Android/iOS 에서는 실제(flutter_blue_plus), 그 외/강제 시 목업.
-final blePairingServiceProvider = Provider<BlePairingService>((ref) {
-  return ref.watch(blePairingIsMockProvider)
-      ? MockBlePairingService()
-      : FlutterBluePairingService();
-});
-
 // ---------------------------------------------------------------------------
 // 설정 (6.7)
 // ---------------------------------------------------------------------------
@@ -64,6 +80,7 @@ final blePairingServiceProvider = Provider<BlePairingService>((ref) {
 class SettingsState {
   const SettingsState({
     this.tempThresholdC = 39,
+    this.co2ThresholdPpm = 1500,
     this.elapsedThresholdSec = 120,
     this.probabilityThreshold = 0.5,
     this.emergencyContacts = const <EmergencyContact>[
@@ -71,40 +88,57 @@ class SettingsState {
     ],
     this.sensorSource = SensorDataSource.mock,
     this.espBaseUrl = 'http://192.168.0.10',
-    this.useMockBle = false,
+    this.mqttHost = 'test.mosquitto.org',
+    this.mqttPort = 1883,
+    this.deviceSerial = 'SAVEIN-0001',
   });
 
   final double tempThresholdC;
+
+  /// CO2 경고 임계값(ppm).
+  final double co2ThresholdPpm;
   final int elapsedThresholdSec;
   final double probabilityThreshold;
   final List<EmergencyContact> emergencyContacts;
 
-  /// 센서 데이터 소스(목업/ESP 서버).
+  /// 센서 데이터 소스(목업/ESP 서버/MQTT).
   final SensorDataSource sensorSource;
 
   /// ESP 보드 서버 베이스 URL (예: http://192.168.0.42).
   final String espBaseUrl;
 
-  /// BLE 스캔을 목업으로 강제(에뮬레이터/BLE 미지원 환경용).
-  final bool useMockBle;
+  /// MQTT 브로커 호스트 (예: test.mosquitto.org).
+  final String mqttHost;
+
+  /// MQTT 브로커 포트 (평문 1883 / TLS 8883).
+  final int mqttPort;
+
+  /// 하드웨어 기기 시리얼 넘버 — savein/{시리얼}/* 토픽으로 통신한다.
+  final String deviceSerial;
 
   SettingsState copyWith({
     double? tempThresholdC,
+    double? co2ThresholdPpm,
     int? elapsedThresholdSec,
     double? probabilityThreshold,
     List<EmergencyContact>? emergencyContacts,
     SensorDataSource? sensorSource,
     String? espBaseUrl,
-    bool? useMockBle,
+    String? mqttHost,
+    int? mqttPort,
+    String? deviceSerial,
   }) =>
       SettingsState(
         tempThresholdC: tempThresholdC ?? this.tempThresholdC,
+        co2ThresholdPpm: co2ThresholdPpm ?? this.co2ThresholdPpm,
         elapsedThresholdSec: elapsedThresholdSec ?? this.elapsedThresholdSec,
         probabilityThreshold: probabilityThreshold ?? this.probabilityThreshold,
         emergencyContacts: emergencyContacts ?? this.emergencyContacts,
         sensorSource: sensorSource ?? this.sensorSource,
         espBaseUrl: espBaseUrl ?? this.espBaseUrl,
-        useMockBle: useMockBle ?? this.useMockBle,
+        mqttHost: mqttHost ?? this.mqttHost,
+        mqttPort: mqttPort ?? this.mqttPort,
+        deviceSerial: deviceSerial ?? this.deviceSerial,
       );
 }
 
@@ -114,6 +148,8 @@ class SettingsNotifier extends Notifier<SettingsState> {
 
   void setTempThreshold(double v) =>
       state = state.copyWith(tempThresholdC: v);
+  void setCo2Threshold(double ppm) =>
+      state = state.copyWith(co2ThresholdPpm: ppm);
   void setElapsedThreshold(int sec) =>
       state = state.copyWith(elapsedThresholdSec: sec);
   void setProbabilityThreshold(double v) =>
@@ -122,7 +158,23 @@ class SettingsNotifier extends Notifier<SettingsState> {
   void setSensorSource(SensorDataSource source) =>
       state = state.copyWith(sensorSource: source);
   void setEspBaseUrl(String url) => state = state.copyWith(espBaseUrl: url);
-  void setUseMockBle(bool v) => state = state.copyWith(useMockBle: v);
+  void setMqttHost(String host) => state = state.copyWith(mqttHost: host);
+  void setMqttPort(int port) => state = state.copyWith(mqttPort: port);
+  void setDeviceSerial(String serial) =>
+      state = state.copyWith(deviceSerial: serial);
+
+  /// MQTT 소스 설정을 한 번에 적용(원자적 갱신 — 연속 상태 변경 캐스케이드 방지).
+  void applyMqttConfig({
+    required String serial,
+    required String host,
+    required int port,
+  }) =>
+      state = state.copyWith(
+        deviceSerial: serial,
+        mqttHost: host,
+        mqttPort: port,
+        sensorSource: SensorDataSource.mqtt,
+      );
 
   void addContact(EmergencyContact c) => state =
       state.copyWith(emergencyContacts: [...state.emergencyContacts, c]);
@@ -177,9 +229,9 @@ class DevicesNotifier extends Notifier<List<DeviceInfo>> {
   @override
   List<DeviceInfo> build() => const <DeviceInfo>[
         DeviceInfo(
-          id: 'S-001',
-          name: 'SeatGuard Radar A1',
-          battery: 88,
+          id: 'SAVEIN-0001', // 시리얼 넘버 = savein/{id}/* 토픽 키
+          name: 'SAVEIN Pod',
+          battery: -1, // 배터리는 telemetry/status 로 갱신(현재 미확정)
           connected: true,
           sensorType: SensorType.radar,
         ),
@@ -245,6 +297,18 @@ class AlertsNotifier extends Notifier<List<AlertEvent>> {
       );
     }
 
+    // CO2 농도 경고(환기 부족). 매우 높고(≥2000) 탑승 중이면 위험으로 격상.
+    if (reading.co2 >= settings.co2ThresholdPpm) {
+      final bool severe = occupied && reading.co2 >= 2000;
+      _fire(
+        AlertType.highCo2,
+        severe ? AlertSeverity.critical : AlertSeverity.warning,
+        now,
+        severe ? 'CO₂ 위험 농도' : 'CO₂ 농도 높음',
+        '실내 CO₂ ${reading.co2.toStringAsFixed(0)}ppm — 환기가 필요해요',
+      );
+    }
+
     if (occupiedSince != null) {
       final Duration elapsed = now.difference(occupiedSince);
       if (elapsed.inSeconds >= settings.elapsedThresholdSec) {
@@ -301,6 +365,21 @@ class AlertsNotifier extends Notifier<List<AlertEvent>> {
       }
     });
     _timers.add(timer);
+  }
+
+  /// POD(MQTT `event` 토픽)가 발행한 상태 전이 이벤트를 알림 목록에 편입한다.
+  void ingestExternal(AlertEvent alert) {
+    final DateTime? last = _lastFired[alert.type];
+    if (last != null &&
+        alert.time.difference(last) < const Duration(seconds: 20)) {
+      return; // 동일 유형 쿨다운
+    }
+    _lastFired[alert.type] = alert.time;
+    state = <AlertEvent>[alert, ...state];
+    ref.read(notificationServiceProvider).showLocal(alert);
+    if (alert.severity == AlertSeverity.critical) {
+      _scheduleEscalation(alert);
+    }
   }
 
   void acknowledge(String id) =>
@@ -367,6 +446,7 @@ class MonitorState {
   double get probability => inference?.probability ?? 0;
   double get temperatureC => latest?.temperatureC ?? 0;
   double get humidity => latest?.humidity ?? 0;
+  double get co2 => latest?.co2 ?? 0;
 
   factory MonitorState.initial() => const MonitorState(
         latest: null,
@@ -380,6 +460,8 @@ class MonitorState {
 
 class MonitorNotifier extends Notifier<MonitorState> {
   final WindowBuffer _buffer = WindowBuffer(size: 15);
+  StreamSubscription<AlertEvent>? _eventSub;
+  bool _disposed = false;
 
   @override
   MonitorState build() {
@@ -387,7 +469,34 @@ class MonitorNotifier extends Notifier<MonitorState> {
       final SensorReading? reading = next.value;
       if (reading != null) _onReading(reading);
     });
+
+    // MQTT POD 의 event/status 를 구독해 알림으로 편입한다(소스 전환 시 재바인딩).
+    // fireImmediately 대신 마이크로태스크로 초기 바인딩해 빌드 중 부수효과를 피한다.
+    ref.listen<MqttSensorService?>(
+        mqttServiceProvider, (prev, next) => _bindMqtt(next));
+    Future<void>.microtask(() {
+      if (!_disposed) _bindMqtt(ref.read(mqttServiceProvider));
+    });
+
+    ref.onDispose(() {
+      _disposed = true;
+      _eventSub?.cancel();
+    });
     return MonitorState.initial();
+  }
+
+  void _bindMqtt(MqttSensorService? service) {
+    _eventSub?.cancel();
+    _eventSub = null;
+    if (service == null) return;
+    // status=offline 이벤트도 서비스가 eventStream 으로 함께 발행한다.
+    // 교차 프로바이더(alerts) 수정은 빌드 phase 경합을 피하려 마이크로태스크로 미룬다.
+    _eventSub = service.eventStream().listen((AlertEvent e) {
+      if (_disposed) return;
+      Future<void>.microtask(() {
+        if (!_disposed) ref.read(alertsProvider.notifier).ingestExternal(e);
+      });
+    });
   }
 
   /// 탑승 상태 수동 온/오프(대시보드 토글). 켤 때 경과시간 측정 시작(6.9).
@@ -400,6 +509,9 @@ class MonitorNotifier extends Notifier<MonitorState> {
       occupied: value,
       occupiedSince: value ? (state.occupiedSince ?? DateTime.now()) : null,
     );
+
+    // §5.1 차주(탑승) 토글 → savein/{시리얼}/cmd 로 retain 발행(MQTT 소스일 때만).
+    ref.read(mqttServiceProvider)?.publishOwnerAboard(value);
 
     final SensorReading? r = state.latest;
     if (r != null) {
@@ -441,12 +553,17 @@ class MonitorNotifier extends Notifier<MonitorState> {
       occupiedSince: state.occupiedSince,
     );
 
-    ref.read(alertsProvider.notifier).evaluate(
-          reading: r,
-          result: result,
-          occupiedSince: state.occupiedSince,
-          settings: settings,
-        );
+    // 알림 평가(교차 프로바이더 수정)는 빌드 phase 와의 경합을 피하려 마이크로태스크로 미룬다.
+    final DateTime? occupiedSince = state.occupiedSince;
+    Future<void>.microtask(() {
+      if (_disposed) return;
+      ref.read(alertsProvider.notifier).evaluate(
+            reading: r,
+            result: result,
+            occupiedSince: occupiedSince,
+            settings: settings,
+          );
+    });
   }
 }
 

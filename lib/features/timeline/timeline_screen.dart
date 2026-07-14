@@ -144,10 +144,20 @@ class _Co2TrendCard extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final List<SensorReading> sh = ref.watch(monitorProvider).sensorHistory;
     final List<SensorReading> recent = _recentForChart(sh);
+    // CO₂ 0/-1 은 미측정 센티넬 — 그래프·현재값에서 제외한다(실측만, 바닥 급강하 방지).
     final List<FlSpot> spots = <FlSpot>[
-      for (int i = 0; i < recent.length; i++) FlSpot(i.toDouble(), recent[i].co2),
+      for (int i = 0; i < recent.length; i++)
+        if (recent[i].co2 > 0) FlSpot(i.toDouble(), recent[i].co2),
     ];
-    final double current = recent.isEmpty ? 0 : recent.last.co2;
+    // 현재값: 가장 최근의 유효(>0) CO₂. 없으면 '측정 대기'로 표기.
+    double current = 0;
+    for (int i = recent.length - 1; i >= 0; i--) {
+      if (recent[i].co2 > 0) {
+        current = recent[i].co2;
+        break;
+      }
+    }
+    final bool hasCo2 = current > 0;
 
     double peak = 0;
     for (final FlSpot s in spots) {
@@ -156,7 +166,7 @@ class _Co2TrendCard extends ConsumerWidget {
     // y축 상단: 최소 1600, 그 이상이면 400 단위로 올림.
     final double maxY = peak < 1600 ? 1600 : (peak / 400).ceil() * 400;
     final AirQuality quality = current.airQuality;
-    final Color color = quality.color;
+    final Color color = hasCo2 ? quality.color : AppColors.textTertiary;
 
     return AppCard(
       child: Column(
@@ -169,7 +179,9 @@ class _Co2TrendCard extends ConsumerWidget {
               _LegendDot(color: color, label: 'CO₂ ppm'),
               const Spacer(),
               Text(
-                '현재 ${current.toStringAsFixed(0)} ppm · ${quality.label}',
+                hasCo2
+                    ? '현재 ${current.toStringAsFixed(0)} ppm · ${quality.label}'
+                    : '현재 측정 대기',
                 style: TextStyle(
                     color: color, fontSize: 13, fontWeight: FontWeight.w700),
               ),

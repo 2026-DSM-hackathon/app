@@ -348,7 +348,15 @@ class MqttSensorService implements SensorService {
   void _handleEvent(String payload) {
     final Object? d = jsonDecode(payload);
     if (d is! Map<String, dynamic>) return;
-    final String type = '${d['type'] ?? d['event'] ?? 'event'}';
+    final String type = '${d['type'] ?? d['event'] ?? ''}';
+    final AlertType? at = _mapEventType(type);
+    // 종류를 특정할 수 없는 이벤트(펌웨어 code 정수 등, §4.2 미확정)는 알림을
+    // 만들지 않는다. 예전엔 이 경우 전부 '탑승 감지'로 오분류돼 알림이 잘못 떴다.
+    // (내부 사람 감지 카드는 telemetry occ 실측을 따르므로 이벤트로는 안 다룬다.)
+    if (at == null) {
+      debugPrint('[MQTT] event 무시(종류 미상): $payload');
+      return;
+    }
     final String sevStr =
         '${d['severity'] ?? d['level'] ?? 'info'}'.toLowerCase();
     final String message = '${d['message'] ?? d['msg'] ?? ''}';
@@ -357,12 +365,15 @@ class MqttSensorService implements SensorService {
         : (sevStr.contains('warn')
             ? AlertSeverity.warning
             : AlertSeverity.info);
-    final AlertType at = _mapEventType(type);
     final String title = _eventTitle(at);
     _emitEvent(at, sev, title, message.isNotEmpty ? message : title);
   }
 
-  AlertType _mapEventType(String t) {
+  /// 이벤트 종류 문자열 → AlertType. 알 수 없으면 null(오분류 방지).
+  /// 펌웨어 event 는 code(정수, §4.2) 기반이라 이 문자열 매칭에 안 걸린다 —
+  /// 현재 실기기 이벤트는 여기서 null 이 되어 알림을 만들지 않는다.
+  /// (§4.2 확정 시 code→AlertType 매핑을 _handleEvent/여기에 추가한다.)
+  AlertType? _mapEventType(String t) {
     final String s = t.toLowerCase();
     if (s.contains('temp') || s.contains('heat')) {
       return AlertType.highTemperature;
@@ -374,7 +385,13 @@ class MqttSensorService implements SensorService {
     if (s.contains('prolong') || s.contains('long')) {
       return AlertType.prolongedOccupancy;
     }
-    return AlertType.occupancyDetected;
+    if (s.contains('occup') ||
+        s.contains('presence') ||
+        s.contains('person') ||
+        s.contains('board')) {
+      return AlertType.occupancyDetected;
+    }
+    return null; // 미상 종류(예: code 정수만 있는 이벤트) → 알림 생성 안 함
   }
 
   String _eventTitle(AlertType t) => switch (t) {
@@ -440,7 +457,7 @@ class MqttSensorService implements SensorService {
     final MqttClientPayloadBuilder b = MqttClientPayloadBuilder()
       ..addString(jsonEncode(json));
     c.publishMessage(topic, MqttQos.atLeastOnce, b.payload!, retain: retain);
-    debugPrint('[MQTT] cmd 발행 → $opic '
+    debugPrint('[MQTT] cmd 발행 → $topic '
         '(QoS1${retain ? ', retain' : ''})$tag ${jsonEncode(json)}');
   }
 

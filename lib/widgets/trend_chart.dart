@@ -37,6 +37,9 @@ class TrendChart extends StatelessWidget {
         LineChartData(
           minY: minY,
           maxY: maxY,
+          // 값이 축 범위(minY/maxY)를 벗어나도 라인이 플롯 영역(=카드) 밖으로
+          // 삐져나가지 않도록 상하좌우 클리핑한다. (예: CO₂ -1 같은 범위 밖 값)
+          clipData: const FlClipData.all(),
           lineTouchData: const LineTouchData(enabled: false),
           borderData: FlBorderData(show: false),
           gridData: FlGridData(

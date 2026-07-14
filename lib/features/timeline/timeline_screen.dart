@@ -63,7 +63,16 @@ class TimelineScreen extends ConsumerWidget {
   }
 }
 
-/// 단일 지표 실측 추이(꺾은선). sensorHistory 를 그대로 그린다.
+/// 추이 그래프에 표시할 최근 실측 데이터 최대 개수(전체 대신 최근 N개만 그린다).
+const int _kTrendChartMaxPoints = 20;
+
+/// sensorHistory 에서 그래프용으로 최근 [_kTrendChartMaxPoints] 개만 잘라낸다.
+List<SensorReading> _recentForChart(List<SensorReading> sh) =>
+    sh.length > _kTrendChartMaxPoints
+        ? sh.sublist(sh.length - _kTrendChartMaxPoints)
+        : sh;
+
+/// 단일 지표 실측 추이(꺾은선). sensorHistory 의 최근 [_kTrendChartMaxPoints]개만 그린다.
 class _MetricTrendCard extends ConsumerWidget {
   const _MetricTrendCard({
     required this.title,
@@ -88,10 +97,12 @@ class _MetricTrendCard extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final List<SensorReading> sh = ref.watch(monitorProvider).sensorHistory;
+    final List<SensorReading> recent = _recentForChart(sh);
     final List<FlSpot> spots = <FlSpot>[
-      for (int i = 0; i < sh.length; i++) FlSpot(i.toDouble(), select(sh[i])),
+      for (int i = 0; i < recent.length; i++)
+        FlSpot(i.toDouble(), select(recent[i])),
     ];
-    final double current = sh.isEmpty ? 0 : select(sh.last);
+    final double current = recent.isEmpty ? 0 : select(recent.last);
     final String metric = title.replaceAll(' 추이', '');
 
     return AppCard(
@@ -132,10 +143,11 @@ class _Co2TrendCard extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final List<SensorReading> sh = ref.watch(monitorProvider).sensorHistory;
+    final List<SensorReading> recent = _recentForChart(sh);
     final List<FlSpot> spots = <FlSpot>[
-      for (int i = 0; i < sh.length; i++) FlSpot(i.toDouble(), sh[i].co2),
+      for (int i = 0; i < recent.length; i++) FlSpot(i.toDouble(), recent[i].co2),
     ];
-    final double current = sh.isEmpty ? 0 : sh.last.co2;
+    final double current = recent.isEmpty ? 0 : recent.last.co2;
 
     double peak = 0;
     for (final FlSpot s in spots) {

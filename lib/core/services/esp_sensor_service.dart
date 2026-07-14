@@ -44,13 +44,16 @@ class EspSensorService implements SensorService {
       final Map<String, dynamic> data =
           jsonDecode(res.body) as Map<String, dynamic>;
       if (_controller.isClosed) return;
+      final double motion = (data['motion'] as num?)?.toDouble() ?? 0;
+      final double occ = (data['occ'] as num?)?.toDouble() ?? motion;
       _controller.add(
         SensorReading(
           time: DateTime.now(),
           temperatureC: (data['temperatureC'] as num?)?.toDouble() ?? 0,
           humidity: (data['humidity'] as num?)?.toDouble() ?? 0,
           co2: (data['co2'] as num?)?.toDouble() ?? 0,
-          motion: (data['motion'] as num?)?.toDouble() ?? 0,
+          motion: motion,
+          occupancy: occ >= 0.5,
           heatstrokeRisk: (data['heatstroke'] as num?)?.toDouble() ?? 0,
         ),
       );

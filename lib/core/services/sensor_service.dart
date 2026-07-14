@@ -61,6 +61,7 @@ class MockSensorService implements SensorService {
         humidity: double.parse(_baseHumidity.toStringAsFixed(0)),
         co2: double.parse(_baseCo2.toStringAsFixed(0)),
         motion: double.parse(motion.toStringAsFixed(2)),
+        occupancy: occupiedNow,
         heatstrokeRisk: double.parse(heat.toStringAsFixed(2)),
       ),
     );

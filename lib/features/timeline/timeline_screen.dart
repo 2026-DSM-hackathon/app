@@ -196,12 +196,38 @@ class _CombinedStatsCard extends ConsumerWidget {
       for (final SensorReading r in sh) r.co2,
     ];
 
+    // 시간대별 감지 횟수: 실측 알림 이벤트를 4시간 구간(00·04·08·12·16·20)으로 집계.
+    final List<AlertEvent> alerts = ref.watch(alertsProvider);
+    final List<int> hourly = List<int>.filled(6, 0);
+    for (final AlertEvent a in alerts) {
+      hourly[(a.time.hour ~/ 4).clamp(0, 5)]++;
+    }
+    final int total = alerts.length;
+
     return AppCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: <Widget>[
           const SectionHeader(title: '통계'),
-          const SizedBox(height: 14),
+          const SizedBox(height: 12),
+          // 그래프: 시간대별 감지 횟수(막대). 아래 숫자 통계와 함께 표시.
+          Text('시간대별 감지 횟수 · 총 $total회',
+              style: const TextStyle(
+                  color: AppColors.textSecondary,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600)),
+          const SizedBox(height: 12),
+          if (total == 0)
+            const SizedBox(
+              height: 150,
+              child: Center(
+                child: Text('감지 기록이 없어요',
+                    style: TextStyle(color: AppColors.textSecondary)),
+              ),
+            )
+          else
+            _DetectionBarChart(counts: hourly),
+          const Divider(height: 28, color: AppColors.divider),
           Row(
             children: const <Widget>[
               Expanded(flex: 5, child: SizedBox.shrink()),
@@ -248,6 +274,99 @@ class _CombinedStatsCard extends ConsumerWidget {
 
 const TextStyle _statHeaderStyle = TextStyle(
     color: AppColors.textSecondary, fontSize: 12, fontWeight: FontWeight.w600);
+
+/// 시간대별 감지 횟수 막대 차트(4시간 구간 6개). 라인 차트와 동일한 다크 스타일.
+class _DetectionBarChart extends StatelessWidget {
+  const _DetectionBarChart({required this.counts});
+
+  final List<int> counts;
+
+  static const List<String> _labels = <String>[
+    '00', '04', '08', '12', '16', '20',
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    int peak = 0;
+    for (final int c in counts) {
+      if (c > peak) peak = c;
+    }
+    final double maxY = (peak < 4 ? 4 : peak + 1).toDouble();
+    final double interval = maxY <= 6 ? 1 : (maxY / 5).ceilToDouble();
+
+    return SizedBox(
+      height: 160,
+      child: BarChart(
+        BarChartData(
+          alignment: BarChartAlignment.spaceAround,
+          minY: 0,
+          maxY: maxY,
+          barTouchData: BarTouchData(enabled: false),
+          borderData: FlBorderData(show: false),
+          gridData: FlGridData(
+            show: true,
+            drawVerticalLine: false,
+            horizontalInterval: interval,
+            getDrawingHorizontalLine: (double v) =>
+                const FlLine(color: AppColors.divider, strokeWidth: 1),
+          ),
+          titlesData: FlTitlesData(
+            show: true,
+            topTitles:
+                const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+            rightTitles:
+                const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+            leftTitles: AxisTitles(
+              sideTitles: SideTitles(
+                showTitles: true,
+                interval: interval,
+                reservedSize: 28,
+                getTitlesWidget: (double value, TitleMeta meta) => Text(
+                  value.toInt().toString(),
+                  style: const TextStyle(
+                      color: AppColors.textTertiary, fontSize: 10),
+                ),
+              ),
+            ),
+            bottomTitles: AxisTitles(
+              sideTitles: SideTitles(
+                showTitles: true,
+                reservedSize: 24,
+                getTitlesWidget: (double value, TitleMeta meta) {
+                  final int i = value.round();
+                  if (i < 0 || i >= _labels.length) {
+                    return const SizedBox.shrink();
+                  }
+                  return Padding(
+                    padding: const EdgeInsets.only(top: 6),
+                    child: Text(_labels[i],
+                        style: const TextStyle(
+                            color: AppColors.textTertiary, fontSize: 10)),
+                  );
+                },
+              ),
+            ),
+          ),
+          barGroups: <BarChartGroupData>[
+            for (int i = 0; i < counts.length; i++)
+              BarChartGroupData(
+                x: i,
+                barRods: <BarChartRodData>[
+                  BarChartRodData(
+                    toY: counts[i].toDouble(),
+                    color: AppColors.primary,
+                    width: 14,
+                    borderRadius:
+                        const BorderRadius.vertical(top: Radius.circular(4)),
+                  ),
+                ],
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
 
 /// 통계 1행: 지표명 + 평균/최고/최저 값.
 class _StatRow extends StatelessWidget {
@@ -335,12 +454,15 @@ class _EmptyChartState extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final MqttStatus status = ref.watch(mqttStatusProvider);
     final link = ref.watch(mqttLinkProvider).value;
     final bool broker = link?.brokerConnected ?? false;
     final bool podOnline = link?.pod == PodConnection.online;
-    final String label = broker
-        ? (podOnline ? '데이터 수신 대기' : '기기 연결 전')
-        : '브로커 연결 전';
+    final String label = status == MqttStatus.idle
+        ? 'MQTT 연결 전'
+        : (broker
+            ? (podOnline ? '데이터 수신 대기' : '기기 연결 전')
+            : '브로커 연결 중…');
     return SizedBox(
       height: 170,
       child: Center(

@@ -10,6 +10,7 @@ import '../features/pairing/pairing_screen.dart';
 import '../features/profile/profile_screen.dart';
 import '../features/settings/settings_screen.dart';
 import '../features/timeline/timeline_screen.dart';
+import '../widgets/status_pill.dart';
 import 'responsive.dart';
 import 'theme.dart';
 
@@ -39,32 +40,75 @@ class _AppShellState extends ConsumerState<AppShell> {
     ProfileScreen(),
   ];
 
+  /// 동시에 겹쳐 띄우는 풀스크린 위험 경보 최대 개수(초과분은 무시).
+  static const int _maxConcurrentCriticalAlerts = 3;
+
   String? _lastShownAlertId;
+  int _openCriticalAlerts = 0;
 
   @override
   Widget build(BuildContext context) {
     final int index = ref.watch(navIndexProvider);
     final int unread = ref.watch(unacknowledgedCountProvider);
+    // MQTT 미연결 시 대시보드 기능을 비활성화하고 안내를 띄운다(연결될 때까지 매번).
+    final bool mqttConnected = ref.watch(mqttConnectedProvider);
+    final MqttStatus mqttStatus = ref.watch(mqttStatusProvider);
 
-    // 새 치명 알림 발생 시 풀스크린 경보 표시(6.5).
+    // 새 치명(위험) 알림 발생 시 풀스크린 경보 표시(6.5).
+    // 단, 동시에 떠 있는 경보는 최대 _maxConcurrentCriticalAlerts 개까지만 — 초과분은 무시.
     ref.listen<List<AlertEvent>>(alertsProvider, (prev, next) {
       if (next.isEmpty) return;
       final AlertEvent newest = next.first;
-      if (newest.severity == AlertSeverity.critical &&
-          !newest.acknowledged &&
-          newest.id != _lastShownAlertId) {
-        _lastShownAlertId = newest.id;
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (mounted) showCriticalAlert(context, ref, newest);
-        });
+      if (newest.severity != AlertSeverity.critical ||
+          newest.acknowledged ||
+          newest.id == _lastShownAlertId) {
+        return;
       }
+      _lastShownAlertId = newest.id;
+      if (_openCriticalAlerts >= _maxConcurrentCriticalAlerts) {
+        debugPrint('[ALERT] 위험 경보 팝업 최대 $_maxConcurrentCriticalAlerts개 '
+            '초과 — 무시: ${newest.title}');
+        return;
+      }
+      _openCriticalAlerts++;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) {
+          _openCriticalAlerts--;
+          return;
+        }
+        // 팝업이 닫히면(ACK/나중에) 슬롯을 반납해 다음 위험 알림이 다시 뜰 수 있게 한다.
+        showCriticalAlert(context, ref, newest)
+            .whenComplete(() => _openCriticalAlerts--);
+      });
     });
 
     return Scaffold(
       extendBody: true,
       // 기종 반응형: 넓은 화면에서는 콘텐츠/하단 바를 중앙 폭으로 제한한다.
       body: ResponsiveCenter(
-        child: IndexedStack(index: index, children: _tabs),
+        child: Stack(
+          children: <Widget>[
+            // 미연결 시 탭 내용은 포인터 차단 + 흐리게 처리해 비활성화한다.
+            IgnorePointer(
+              ignoring: !mqttConnected,
+              child: AnimatedOpacity(
+                duration: const Duration(milliseconds: 200),
+                opacity: mqttConnected ? 1 : 0.35,
+                child: IndexedStack(index: index, children: _tabs),
+              ),
+            ),
+            if (!mqttConnected)
+              Positioned.fill(
+                child: _DisconnectedOverlay(
+                  status: mqttStatus,
+                  onConnect: () => Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                        builder: (_) => const PairingScreen()),
+                  ),
+                ),
+              ),
+          ],
+        ),
       ),
       // 하단 바는 높이를 자식(66px)에 맞춰야 한다(heightFactor: 1).
       // 넓은 화면에서는 가운데 정렬 + 최대폭 제한으로 반응형 처리.
@@ -211,6 +255,87 @@ class _BottomBar extends StatelessWidget {
           shape: BoxShape.circle,
         ),
         child: const Icon(Icons.add, color: Colors.white, size: 26),
+      ),
+    );
+  }
+}
+
+/// MQTT 미연결 시 탭 위를 덮는 안내 오버레이. 연결될 때까지 대시보드에서 매번 표시된다.
+/// 상태(연결 전/연결 중)를 보여주고 '기기 연결하기' → 페어링(등록·연결)으로 이동한다.
+class _DisconnectedOverlay extends StatelessWidget {
+  const _DisconnectedOverlay({
+    required this.status,
+    required this.onConnect,
+  });
+
+  final MqttStatus status;
+  final VoidCallback onConnect;
+
+  @override
+  Widget build(BuildContext context) {
+    final bool connecting = status == MqttStatus.connecting;
+    final Color statusColor =
+        connecting ? AppColors.orange : AppColors.textTertiary;
+    return Container(
+      color: AppColors.background.withValues(alpha: 0.86),
+      alignment: Alignment.center,
+      child: Padding(
+        padding: const EdgeInsets.all(28),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            Container(
+              width: 96,
+              height: 96,
+              decoration: BoxDecoration(
+                color: statusColor.withValues(alpha: 0.16),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(
+                  connecting
+                      ? Icons.cloud_sync_rounded
+                      : Icons.cloud_off_rounded,
+                  color: statusColor,
+                  size: 48),
+            ),
+            const SizedBox(height: 22),
+            const Text(
+              'MQTT 연결이 필요합니다',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                  color: AppColors.textPrimary,
+                  fontSize: 20,
+                  fontWeight: FontWeight.w800),
+            ),
+            const SizedBox(height: 10),
+            const Text(
+              '기기를 등록하고 연결하기 전까지\n대시보드 기능이 비활성화됩니다.',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: AppColors.textSecondary, fontSize: 14),
+            ),
+            const SizedBox(height: 16),
+            StatusPill(
+              label: status.label,
+              color: statusColor,
+              icon: connecting
+                  ? Icons.cloud_sync_outlined
+                  : Icons.cloud_off_outlined,
+            ),
+            const SizedBox(height: 24),
+            FilledButton(
+              style: FilledButton.styleFrom(
+                backgroundColor: AppColors.primary,
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 32, vertical: 14),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14)),
+              ),
+              onPressed: onConnect,
+              child: const Text('기기 연결하기',
+                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
+            ),
+          ],
+        ),
       ),
     );
   }

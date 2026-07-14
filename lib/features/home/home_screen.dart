@@ -10,9 +10,7 @@ import '../../core/format.dart';
 import '../../core/models.dart';
 import '../../core/providers.dart';
 import '../../widgets/app_card.dart';
-import '../../widgets/ring_gauge.dart';
 import '../../widgets/stat_card.dart';
-import '../../widgets/status_pill.dart';
 
 /// 홈 대시보드(6.3, F-02/03). 센서 값 + 열사병 확률을 실시간으로 표시한다.
 class HomeScreen extends ConsumerWidget {
@@ -21,7 +19,6 @@ class HomeScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final MonitorState monitor = ref.watch(monitorProvider);
-    final SpaceProfile profile = ref.watch(profileProvider);
     final SettingsState settings = ref.watch(settingsProvider);
     final int unread = ref.watch(unacknowledgedCountProvider);
 
@@ -69,17 +66,19 @@ class HomeScreen extends ConsumerWidget {
         padding: const EdgeInsets.fromLTRB(20, 12, 20, 120),
         children: <Widget>[
           _Header(
-            userName: profile.userName,
             unread: unread,
             onBell: () => ref.read(navIndexProvider.notifier).set(2),
           ),
           const SizedBox(height: 22),
-          _PrimaryCard(
+          // 상단 상태: '차주 하차' → '내부 사람 감지' 순으로 전체 폭 카드를 세로로 쌓는다.
+          _OwnerAlightCard(
             monitor: monitor,
-            pct: pct,
-            hot: hot,
             onToggle: (bool v) =>
                 ref.read(monitorProvider.notifier).setOccupied(v),
+          ),
+          const SizedBox(height: 12),
+          _PersonDetectionCard(
+            detected: monitor.detected,
           ),
           const SizedBox(height: 16),
           // 기종 반응형: 넓은 화면은 한 줄, 좁은 화면은 2열.
@@ -129,12 +128,10 @@ class HomeScreen extends ConsumerWidget {
 
 class _Header extends StatelessWidget {
   const _Header({
-    required this.userName,
     required this.unread,
     required this.onBell,
   });
 
-  final String userName;
   final int unread;
   final VoidCallback onBell;
 
@@ -142,26 +139,19 @@ class _Header extends StatelessWidget {
   Widget build(BuildContext context) {
     const Widget bell = Icon(Icons.notifications_none_rounded,
         color: AppColors.textPrimary, size: 28);
+    final DateTime now = DateTime.now();
     return Row(
       children: <Widget>[
         Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: <Widget>[
-              Text('안녕하세요, $userName님!',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                      fontSize: 24,
-                      fontWeight: FontWeight.w800,
-                      color: AppColors.textPrimary)),
-              const SizedBox(height: 4),
-              Text(
-                formatKoreanDate(DateTime.now()),
-                style: const TextStyle(
-                    color: AppColors.textSecondary, fontSize: 13),
-              ),
-            ],
+          // 인사말 제거 — 연도 포함 현재 날짜만 표시(예: 2026년 7월 14일 화요일).
+          child: Text(
+            '${now.year}년 ${formatKoreanDate(now)}',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.w700,
+                color: AppColors.textPrimary),
           ),
         ),
         IconButton(
@@ -179,25 +169,67 @@ class _Header extends StatelessWidget {
   }
 }
 
-/// 주 카드: 차주 하차 토글 + 큰 경과시간 + 열사병 확률 게이지.
-class _PrimaryCard extends StatelessWidget {
-  const _PrimaryCard({
+/// 카드: 내부 사람 감지 — 감지됨(위험/빨강) vs 감지되지 않음(안전/초록).
+/// 감지 신호는 POD 재실(occ) 실측값을 사용한다(없으면 추론 폴백). 제목(좌) + 상태(우).
+class _PersonDetectionCard extends StatelessWidget {
+  const _PersonDetectionCard({required this.detected});
+
+  final bool detected;
+
+  @override
+  Widget build(BuildContext context) {
+    final Color color = detected ? AppColors.red : AppColors.green;
+    final String label = detected ? '사람 감지됨' : '사람 감지되지 않음';
+    final IconData icon =
+        detected ? Icons.person_rounded : Icons.person_off_rounded;
+    return AppCard(
+      padding: const EdgeInsets.all(20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          const Text('내부 사람 감지',
+              style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w700,
+                  color: AppColors.textPrimary)),
+          const SizedBox(height: 16),
+          Align(
+            alignment: Alignment.centerRight,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                Icon(icon, color: color, size: 22),
+                const SizedBox(width: 8),
+                Text(label,
+                    style: TextStyle(
+                        color: color,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w700)),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 카드: 차주 하차 — 제목(좌) + ON/OFF 토글(우) + 가운데 경과시간 패널.
+/// ON=하차, OFF=차량 내부.
+class _OwnerAlightCard extends StatelessWidget {
+  const _OwnerAlightCard({
     required this.monitor,
-    required this.pct,
-    required this.hot,
     required this.onToggle,
   });
 
   final MonitorState monitor;
-  final int pct;
-  final bool hot;
   final ValueChanged<bool> onToggle;
 
   @override
   Widget build(BuildContext context) {
     final bool occupied = monitor.occupied;
     return AppCard(
-      padding: const EdgeInsets.all(20),
+      padding: const EdgeInsets.fromLTRB(20, 10, 20, 24),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: <Widget>[
@@ -205,7 +237,7 @@ class _PrimaryCard extends StatelessWidget {
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: <Widget>[
               const Flexible(
-                child: Text('차주 하차 감지',
+                child: Text('차주 하차',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
@@ -213,16 +245,15 @@ class _PrimaryCard extends StatelessWidget {
                         fontWeight: FontWeight.w700,
                         color: AppColors.textPrimary)),
               ),
-              // 차주 하차 상태 수동 온/오프 버튼.
               Row(
                 mainAxisSize: MainAxisSize.min,
                 children: <Widget>[
-                  Text(occupied ? '차주 하차 ON' : '차주 하차 OFF',
+                  Text(occupied ? '하차 ON' : '하차 OFF',
                       style: TextStyle(
                         color: occupied
                             ? AppColors.green
                             : AppColors.textSecondary,
-                        fontSize: 12,
+                        fontSize: 13,
                         fontWeight: FontWeight.w600,
                       )),
                   Switch(
@@ -234,66 +265,31 @@ class _PrimaryCard extends StatelessWidget {
               ),
             ],
           ),
-          const SizedBox(height: 4),
-          Align(
-            alignment: Alignment.centerLeft,
-            child: StatusPill(
-              label: occupied ? '차주 하차' : '감지 대기',
-              color: occupied ? AppColors.green : AppColors.textSecondary,
-              icon: occupied
-                  ? Icons.directions_walk_rounded
-                  : Icons.chair_outlined,
-            ),
-          ),
-          const SizedBox(height: 18),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.center,
+          const SizedBox(height: 20),
+          // 하차 경과 시간(가운데 정렬 — 별도 박스로 감싸지 않음).
+          const Row(
+            mainAxisAlignment: MainAxisAlignment.center,
             children: <Widget>[
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: <Widget>[
-                    const Row(
-                      children: <Widget>[
-                        Icon(Icons.timer_outlined,
-                            size: 16, color: AppColors.blue),
-                        SizedBox(width: 6),
-                        Text('차주 하차 경과 시간',
-                            style: TextStyle(
-                                color: AppColors.textSecondary, fontSize: 13)),
-                      ],
-                    ),
-                    const SizedBox(height: 6),
-                    // 경과시간 강조(큰 글씨).
-                    _LiveDuration(
-                      since: monitor.occupiedSince,
-                      style: const TextStyle(
-                          color: AppColors.textPrimary,
-                          fontSize: 40,
-                          fontWeight: FontWeight.w800,
-                          height: 1.0),
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      '실내 ${monitor.temperatureC.toStringAsFixed(1)}°C · 습도 ${monitor.humidity.toStringAsFixed(0)}% · CO₂ ${monitor.co2.toStringAsFixed(0)}ppm',
-                      style: TextStyle(
-                          color:
-                              hot ? AppColors.orange : AppColors.textTertiary,
-                          fontSize: 12),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 12),
-              RingGauge(
-                value: monitor.heatstroke,
-                size: 96,
-                stroke: 11,
-                color: heatstrokeColor(monitor.heatstroke),
-                centerText: '$pct%',
-                centerSubtext: '열사병 확률',
-              ),
+              Icon(Icons.timer_outlined, size: 17, color: AppColors.blue),
+              SizedBox(width: 6),
+              Text('하차 경과 시간',
+                  style:
+                      TextStyle(color: AppColors.textSecondary, fontSize: 14)),
             ],
+          ),
+          const SizedBox(height: 12),
+          Center(
+            child: FittedBox(
+              fit: BoxFit.scaleDown,
+              child: _LiveDuration(
+                since: monitor.occupiedSince,
+                style: const TextStyle(
+                    color: AppColors.textPrimary,
+                    fontSize: 56,
+                    fontWeight: FontWeight.w800,
+                    height: 1.0),
+              ),
+            ),
           ),
         ],
       ),

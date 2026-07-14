@@ -64,6 +64,9 @@ class _PairingScreenState extends ConsumerState<PairingScreen> {
           port: port,
         );
 
+    // '직접 연결' — 이 버튼을 눌러야 실제로 MQTT 에 연결한다(자동 연결 안 함).
+    ref.read(mqttConnectRequestedProvider.notifier).request();
+
     ref.read(devicesProvider.notifier).add(
           DeviceInfo(
             id: serial,
@@ -122,14 +125,14 @@ class _PairingScreenState extends ConsumerState<PairingScreen> {
                     _Field(
                       label: '시리얼 넘버',
                       controller: _serial,
-                      hint: '예: SAVEIN-0001',
+                      hint: '예: SVN-EED364',
                       icon: Icons.qr_code_2_rounded,
                     ),
                     const SizedBox(height: 14),
                     _Field(
                       label: 'MQTT 브로커 호스트',
                       controller: _host,
-                      hint: '예: test.mosquitto.org',
+                      hint: '예: broker.emqx.io',
                       icon: Icons.dns_outlined,
                       keyboardType: TextInputType.url,
                     ),
@@ -234,8 +237,8 @@ class _ConnectionCard extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final MqttStatus status = ref.watch(mqttStatusProvider);
     final l = ref.watch(mqttLinkProvider).asData?.value;
-    final bool broker = l?.brokerConnected ?? false;
     final PodConnection pod = l?.pod ?? PodConnection.unknown;
     final MonitorState monitor = ref.watch(monitorProvider);
     final bool hasData = monitor.latest != null;
@@ -256,10 +259,21 @@ class _ConnectionCard extends ConsumerWidget {
           Row(
             children: <Widget>[
               StatusPill(
-                label: broker ? '브로커 연결됨' : '브로커 연결 중…',
-                color: broker ? AppColors.teal : AppColors.orange,
-                icon:
-                    broker ? Icons.cloud_done_outlined : Icons.cloud_sync_outlined,
+                label: switch (status) {
+                  MqttStatus.connected => '브로커 연결됨',
+                  MqttStatus.connecting => '브로커 연결 중…',
+                  MqttStatus.idle => 'MQTT 연결 전',
+                },
+                color: switch (status) {
+                  MqttStatus.connected => AppColors.teal,
+                  MqttStatus.connecting => AppColors.orange,
+                  MqttStatus.idle => AppColors.textTertiary,
+                },
+                icon: switch (status) {
+                  MqttStatus.connected => Icons.cloud_done_outlined,
+                  MqttStatus.connecting => Icons.cloud_sync_outlined,
+                  MqttStatus.idle => Icons.cloud_off_outlined,
+                },
               ),
               const SizedBox(width: 8),
               StatusPill(
@@ -276,7 +290,7 @@ class _ConnectionCard extends ConsumerWidget {
           const Divider(color: AppColors.divider, height: 26),
           if (!hasData)
             const Text(
-              '텔레메트리 수신 대기 중… (retain 이면 구독 즉시 마지막 상태가 도착해요)',
+              '텔레메트리 수신 대기 중…',
               style: TextStyle(color: AppColors.textSecondary, fontSize: 12),
             )
           else

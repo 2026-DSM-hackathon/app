@@ -25,11 +25,15 @@ final mqttServiceProvider = Provider<MqttSensorService?>((ref) {
   final int port = ref.watch(settingsProvider.select((s) => s.mqttPort));
   final String serial =
       ref.watch(settingsProvider.select((s) => s.deviceSerial));
+  final bool requested = ref.watch(mqttConnectRequestedProvider);
 
   final MqttSensorService service =
       MqttSensorService(host: host, port: port, serial: serial);
-  // 위젯 빌드 도중 부수효과(연결 시작)가 발생하지 않도록 다음 마이크로태스크로 미룬다.
-  Future<void>.microtask(service.connect);
+  // 자동 연결 금지 — '등록하고 연결'(requested)을 눌렀을 때만 실제로 연결한다.
+  // 부수효과(연결 시작)는 빌드 도중을 피해 다음 마이크로태스크로 미룬다.
+  if (requested) {
+    Future<void>.microtask(service.connect);
+  }
   ref.onDispose(service.dispose);
   return service;
 });
@@ -39,6 +43,46 @@ final mqttLinkProvider = StreamProvider<MqttLink>((ref) {
   final MqttSensorService? s = ref.watch(mqttServiceProvider);
   if (s == null) return const Stream<MqttLink>.empty();
   return s.linkStream();
+});
+
+/// '직접 연결' 요청 여부. 등록·연결 버튼을 누르기 전에는 MQTT 에 연결하지 않는다.
+/// 앱을 새로 켤 때마다 false 로 시작하므로, 매번 연결을 직접 눌러야 한다.
+class MqttConnectRequestedNotifier extends Notifier<bool> {
+  @override
+  bool build() => false;
+  void request() => state = true;
+  void reset() => state = false;
+}
+
+final mqttConnectRequestedProvider =
+    NotifierProvider<MqttConnectRequestedNotifier, bool>(
+        MqttConnectRequestedNotifier.new);
+
+/// MQTT 연결 상태(연결 전 / 연결 중 / 연결됨). UI 표시·기능 게이트에 사용.
+enum MqttStatus { idle, connecting, connected }
+
+extension MqttStatusLabel on MqttStatus {
+  String get label => switch (this) {
+        MqttStatus.idle => 'MQTT 연결 전',
+        MqttStatus.connecting => '연결 중…',
+        MqttStatus.connected => '연결됨',
+      };
+}
+
+final mqttStatusProvider = Provider<MqttStatus>((ref) {
+  final bool sourceIsMqtt =
+      ref.watch(settingsProvider.select((s) => s.sensorSource)) ==
+          SensorDataSource.mqtt;
+  final bool requested = ref.watch(mqttConnectRequestedProvider);
+  if (!sourceIsMqtt || !requested) return MqttStatus.idle;
+  final bool connected =
+      ref.watch(mqttLinkProvider).value?.brokerConnected ?? false;
+  return connected ? MqttStatus.connected : MqttStatus.connecting;
+});
+
+/// MQTT 연결됨 여부(연결 게이트). 미연결 시 대시보드 기능을 비활성화한다.
+final mqttConnectedProvider = Provider<bool>((ref) {
+  return ref.watch(mqttStatusProvider) == MqttStatus.connected;
 });
 
 /// 센서 소스: 설정의 데이터 소스에 따라 목업/ESP HTTP/MQTT 를 사용한다.
@@ -88,9 +132,9 @@ class SettingsState {
     ],
     this.sensorSource = SensorDataSource.mqtt,
     this.espBaseUrl = 'http://192.168.0.10',
-    this.mqttHost = 'test.mosquitto.org',
+    this.mqttHost = 'broker.emqx.io',
     this.mqttPort = 1883,
-    this.deviceSerial = 'SAVEIN-0001',
+    this.deviceSerial = 'SVN-EED364',
   });
 
   final double tempThresholdC;
@@ -107,7 +151,7 @@ class SettingsState {
   /// ESP 보드 서버 베이스 URL (예: http://192.168.0.42).
   final String espBaseUrl;
 
-  /// MQTT 브로커 호스트 (예: test.mosquitto.org).
+  /// MQTT 브로커 호스트 (예: broker.emqx.io).
   final String mqttHost;
 
   /// MQTT 브로커 포트 (평문 1883 / TLS 8883).
@@ -229,7 +273,7 @@ class DevicesNotifier extends Notifier<List<DeviceInfo>> {
   @override
   List<DeviceInfo> build() => const <DeviceInfo>[
         DeviceInfo(
-          id: 'SAVEIN-0001', // 시리얼 넘버 = savein/{id}/* 토픽 키
+          id: 'SVN-EED364', // 시리얼 넘버 = savein/{id}/* 토픽 키
           name: 'SAVEIN Pod',
           battery: -1, // 배터리는 telemetry/status 로 갱신(현재 미확정)
           connected: true,
@@ -449,6 +493,10 @@ class MonitorState {
   double get co2 => latest?.co2 ?? 0;
   double get heatstroke => latest?.heatstrokeRisk ?? 0; // 0.0~1.0 열사병 확률
 
+  /// 내부 사람 감지 — POD 재실(occ)을 직접 사용(즉시 반영). 실측값이 없으면
+  /// 움직임 기반 추론으로 폴백한다.
+  bool get detected => latest?.occupancy ?? (inference?.occupied ?? false);
+
   factory MonitorState.initial() => const MonitorState(
         latest: null,
         inference: null,
@@ -485,7 +533,7 @@ class MonitorNotifier extends Notifier<MonitorState> {
       final bool was = prev?.value?.brokerConnected ?? false;
       final bool now = next.value?.brokerConnected ?? false;
       if (!was && now && !_disposed) {
-        ref.read(mqttServiceProvider)?.publishOwnerAboard(!state.occupied);
+        ref.read(mqttServiceProvider)?.publishOwnerAway(state.occupied);
       }
     });
 
@@ -522,8 +570,8 @@ class MonitorNotifier extends Notifier<MonitorState> {
     );
 
     // §5.1 차주 하차 토글 → cmd 로 retain 발행(MQTT 소스일 때만).
-    // 토글 ON = 차주 하차 이므로 owner_aboard 는 반대값(!value)으로 보낸다.
-    ref.read(mqttServiceProvider)?.publishOwnerAboard(!value);
+    // 토글 ON(value=true) = 차주 하차 = owner_away=1. 상태를 그대로 away 로 보낸다.
+    ref.read(mqttServiceProvider)?.publishOwnerAway(value);
 
     final SensorReading? r = state.latest;
     if (r != null) {

@@ -7,6 +7,7 @@ import 'package:hack_app/core/format.dart';
 import 'package:hack_app/core/models.dart';
 import 'package:hack_app/core/providers.dart';
 import 'package:hack_app/core/services/inference_service.dart';
+import 'package:hack_app/core/services/mqtt_service.dart';
 import 'package:hack_app/core/services/notification_service.dart';
 
 SensorReading _reading({
@@ -47,6 +48,79 @@ void main() {
       expect(buffer.window.length, 3);
       expect(buffer.window.first.temperatureC, 22);
       expect(buffer.isReady, isTrue);
+    });
+  });
+
+  group('MQTT telemetry 파싱(§4.1)', () {
+    final DateTime t = DateTime(2026, 7, 13, 12);
+
+    test('실제 스키마 키(t/rh/occ/dist/lv)를 올바르게 매핑한다', () {
+      final SensorReading r = MqttSensorService.parseTelemetry(<String, dynamic>{
+        'ts': 1752390000,
+        't': 36.42,
+        'rh': 58.30,
+        'hi': 45.10,
+        'dist': 812,
+        'occ': 1,
+        'lv': 3,
+        'batt': 78,
+      }, now: t);
+      expect(r.temperatureC, 36.42); // t → 온도
+      expect(r.humidity, 58.30); // rh → 습도
+      expect(r.occupancy, isTrue); // occ=1 → 사람 감지됨
+      expect(r.distanceMm, 812); // dist(mm)
+      expect(r.heatstrokeRisk, closeTo(0.75, 1e-9)); // lv 3/4 → 열사병 확률
+      expect(r.co2, 0); // §4.1 에 co2 필드 없음 → 0(더미값 아님)
+    });
+
+    test('occ=0 / dist=-1(측정 실패) 처리', () {
+      final SensorReading r = MqttSensorService.parseTelemetry(
+          <String, dynamic>{'t': 25, 'rh': 40, 'occ': 0, 'dist': -1}, now: t);
+      expect(r.occupancy, isFalse);
+      expect(r.distanceMm, isNull); // -1 → null
+      expect(r.motion, 0);
+    });
+
+    test('펌웨어가 co2 필드를 추가하면 그대로 수신한다', () {
+      final SensorReading r = MqttSensorService.parseTelemetry(
+          <String, dynamic>{'t': 30, 'rh': 50, 'occ': 1, 'co2': 1350}, now: t);
+      expect(r.co2, 1350);
+    });
+
+    test('실제 기기 페이로드(cnt/hint/p 포함)를 그대로 처리한다', () {
+      // SVN-EED364 실측: co2 수신, p=-1(AI 미산출)이라 lv(=0)로 폴백.
+      final SensorReading r = MqttSensorService.parseTelemetry(<String, dynamic>{
+        'ts': 1784023999, 't': 24.13, 'rh': 52.30, 'hi': 23.97, 'dist': 1049,
+        'co2': 3396, 'cnt': 0, 'occ': 0, 'hint': 0, 'p': -1, 'lv': 0,
+        'mode': 0, 'exp': 0, 'batt': 255, 'seq': 39, 'fw': '0.1', 'flags': 36,
+      }, now: t);
+      expect(r.temperatureC, 24.13);
+      expect(r.humidity, 52.30);
+      expect(r.co2, 3396);
+      expect(r.occupancy, isFalse); // occ=0
+      expect(r.distanceMm, 1049);
+      expect(r.heatstrokeRisk, 0); // p=-1 → lv 0/4 폴백 → 0
+    });
+
+    test('p(AI 열사병확률)가 0 이상이면 lv 대신 p 를 쓴다', () {
+      final SensorReading hi = MqttSensorService.parseTelemetry(
+          <String, dynamic>{'t': 40, 'occ': 1, 'p': 0.82, 'lv': 1}, now: t);
+      expect(hi.heatstrokeRisk, closeTo(0.82, 1e-9)); // p 우선
+
+      final SensorReading unset = MqttSensorService.parseTelemetry(
+          <String, dynamic>{'t': 40, 'occ': 1, 'p': -1, 'lv': 2}, now: t);
+      expect(unset.heatstrokeRisk, closeTo(0.5, 1e-9)); // p<0 → lv 2/4 폴백
+    });
+  });
+
+  group('cmd 발행 payload(§5.1 owner_away)', () {
+    test('차주 하차 ON → {type:config, owner_away:1}', () {
+      expect(MqttSensorService.ownerAwayCommand(true),
+          <String, dynamic>{'type': 'config', 'owner_away': 1});
+    });
+    test('차주 하차 OFF → {type:config, owner_away:0}', () {
+      expect(MqttSensorService.ownerAwayCommand(false),
+          <String, dynamic>{'type': 'config', 'owner_away': 0});
     });
   });
 

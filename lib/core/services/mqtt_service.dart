@@ -62,13 +62,17 @@ class SyncProgress {
 ///   savein/{ID}/sync       POD→APP  QoS1         SD 백필 응답 (info/data/end)
 ///   savein/{ID}/cmd        APP→POD  QoS1         명령 JSON(§5). 차주 토글은 retain 발행(§5.1)
 ///
-/// TODO(fw): 아래 JSON 스키마는 임시 가안이다(§5·§5.1 미확정). 펌웨어 확정 시
-///  필드명만 맞추면 되도록 방어적으로 파싱한다(여러 키 이름 허용).
-///   telemetry → {"tempC":27.5,"humidity":55,"co2":780,"motion":0.42,"heatstroke":0.3}
-///   event     → {"type":"high_co2","severity":"warning","message":"..."}
-///   status    → "online" / "offline" (평문) 또는 {"status":"online"}
+/// JSON 스키마(펌웨어 §4·§5 확정본). 필드명은 방어적으로 파싱한다(여러 키 허용).
+///   telemetry → {"ts":..,"t":24.13,"rh":52.3,"hi":23.97,"dist":1049,"co2":3396,
+///                "cnt":0,"occ":0,"hint":0,"p":-1,"lv":0,"mode":0,"exp":0,
+///                "batt":255,"seq":39,"fw":"0.1","flags":36}
+///                t=온도 rh=습도 hi=열지수 co2=ppm dist=초음파mm(-1실패)
+///                occ=재실(0/1) lv=위험단계0~4 exp=노출분 batt=배터리%(255=미측정)
+///                p=AI 열사병확률 0~1(-1=미산출) · cnt/hint=의미 확인 필요(현재 미사용)
+///   event     → {"ts":..,"code":3,"a":1,"b":0}  (code 별 의미는 §4.2)
+///   status    → "online" / "offline" (평문, retain+LWT) 또는 {"status":"online"}
 ///   sync      → {"phase":"info","count":120} / {"phase":"data","samples":[...]} / {"phase":"end"}
-///   cmd       → {"cmd":"owner_aboard","value":true} / {"cmd":"sync","since":...}
+///   cmd       → {"type":"config","owner_away":1} / {"type":"sync","since":...} (§5, 모든 명령에 type)
 class MqttSensorService implements SensorService {
   MqttSensorService({
     required this.host,
@@ -251,26 +255,67 @@ class MqttSensorService implements SensorService {
   void _handleTelemetry(String payload) {
     final Object? decoded = jsonDecode(payload);
     if (decoded is! Map<String, dynamic>) return;
-    // 열사병 확률: 0~1 또는 0~100 으로 올 수 있어, 1 초과면 백분율로 간주해 정규화.
-    final double heatRaw = _pickNum(decoded,
-            ['heatstroke', 'heatstrokeRisk', 'heat_risk', 'risk', 'heat']) ??
-        0;
-    final double heat = (heatRaw > 1 ? heatRaw / 100 : heatRaw).clamp(0.0, 1.0);
-    final SensorReading reading = SensorReading(
-      time: DateTime.now(),
-      temperatureC:
-          _pickNum(decoded, ['tempC', 'temperatureC', 'temperature', 'temp']) ??
-              0,
-      humidity: _pickNum(decoded, ['humidity', 'hum', 'rh']) ?? 0,
-      co2: _pickNum(decoded, ['co2', 'co2ppm', 'co2_ppm', 'eco2', 'CO2']) ?? 0,
-      motion: _pickNum(decoded, ['motion', 'move', 'movement']) ?? 0,
-      heatstrokeRisk: heat,
-    );
+    final SensorReading reading = parseTelemetry(decoded);
+    // 수신·파싱 확인용 로그(값이 제대로 매핑되는지 콘솔에서 검증).
+    debugPrint('[MQTT] telemetry ← 온도 ${reading.temperatureC}°C · '
+        '습도 ${reading.humidity}% · CO₂ ${reading.co2.toStringAsFixed(0)}ppm · '
+        '재실 ${reading.occupancy ? "감지" : "없음"} · '
+        '거리 ${reading.distanceMm ?? "-"}mm · '
+        '열사병 ${(reading.heatstrokeRisk * 100).round()}%');
     if (!_telemetry.isClosed) _telemetry.add(reading);
     // 텔레메트리가 오면 POD 는 온라인으로 간주.
     if (_link.pod != PodConnection.online) {
       _setLink(_link.copyWith(pod: PodConnection.online));
     }
+  }
+
+  /// §4.1 telemetry JSON → SensorReading. 펌웨어 실제 키(t/rh/occ/dist/lv)를
+  /// 파싱하되 구버전 가안 키도 허용한다. 순수 함수(테스트용으로 노출).
+  @visibleForTesting
+  static SensorReading parseTelemetry(Map<String, dynamic> m,
+      {DateTime? now}) {
+    // 온도(t)/습도(rh): §4.1 실제 키. 구버전 가안 키도 함께 허용.
+    final double tempC =
+        _pickNum(m, ['t', 'tempC', 'temperatureC', 'temperature', 'temp']) ?? 0;
+    final double rh = _pickNum(m, ['rh', 'humidity', 'hum']) ?? 0;
+
+    // CO₂: §4.1 telemetry 에는 아직 co2 필드가 없다. 펌웨어가 "co2":<ppm> 를
+    // 추가하면 여기서 그대로 수신된다(그 전까지는 0 — 더미값 넣지 않음).
+    final double co2 =
+        _pickNum(m, ['co2', 'co2ppm', 'co2_ppm', 'eco2', 'CO2']) ?? 0;
+
+    // 사람 감지(재실): §4.1 occ(0/1). 초음파 거리 dist(mm, -1=측정 실패).
+    final double occRaw =
+        _pickNum(m, ['occ', 'occupied', 'presence', 'motion', 'move']) ?? 0;
+    final bool occupancy = occRaw >= 0.5;
+    final double? distRaw = _pickNum(m, ['dist', 'distance', 'distanceMm']);
+    final int? distanceMm =
+        (distRaw == null || distRaw < 0) ? null : distRaw.toInt();
+
+    // 열사병 확률: AI 확률 p(0~1, 또는 0~100)를 우선 사용한다. p=-1(미산출) 등
+    // 음수면 아직 값이 없다는 뜻이므로, 규칙 기반 위험단계 lv(0~4)→0~1 로 폴백한다.
+    // (AI 미가동 시에도 0% 대신 실측 위험단계를 보여주는 편이 안전하다.)
+    final double? hsRaw = _pickNum(
+        m, ['heatstroke', 'heatstrokeRisk', 'heat_risk', 'hs', 'risk', 'p']);
+    final double heat;
+    if (hsRaw != null && hsRaw >= 0) {
+      heat = (hsRaw > 1 ? hsRaw / 100 : hsRaw).clamp(0.0, 1.0);
+    } else {
+      final double? lv = _pickNum(m, ['lv', 'level']);
+      heat = lv != null ? (lv / 4).clamp(0.0, 1.0) : 0;
+    }
+
+    return SensorReading(
+      time: now ?? DateTime.now(),
+      temperatureC: tempC,
+      humidity: rh,
+      co2: co2,
+      // 추론 엔진 호환: 재실(occ)을 움직임 강도로도 반영(1.0/0.0).
+      motion: occupancy ? 1.0 : 0.0,
+      occupancy: occupancy,
+      distanceMm: distanceMm,
+      heatstrokeRisk: heat,
+    );
   }
 
   void _handleStatus(String payload) {
@@ -384,39 +429,52 @@ class MqttSensorService implements SensorService {
   bool get isConnected =>
       _client?.connectionStatus?.state == MqttConnectionState.connected;
 
-  void _publish(String topic, Map<String, dynamic> json, {bool retain = false}) {
+  void _publish(String topic, Map<String, dynamic> json,
+      {bool retain = false, String? note}) {
+    final String tag = note != null ? ' · $note' : '';
     final MqttServerClient? c = _client;
     if (c == null || !isConnected) {
-      debugPrint('[MQTT] 발행 보류(미연결): $topic $json');
+      debugPrint('[MQTT] cmd 발행 보류(미연결)$tag → $topic ${jsonEncode(json)}');
       return;
     }
     final MqttClientPayloadBuilder b = MqttClientPayloadBuilder()
       ..addString(jsonEncode(json));
     c.publishMessage(topic, MqttQos.atLeastOnce, b.payload!, retain: retain);
+    debugPrint('[MQTT] cmd 발행 → $opic '
+        '(QoS1${retain ? ', retain' : ''})$tag ${jsonEncode(json)}');
   }
 
   int get _nowSec => DateTime.now().millisecondsSinceEpoch ~/ 1000;
 
-  /// §5.1 차주 하차/탑승 토글 — retain 발행 권장. 마지막 상태가 브로커에 유지된다.
-  /// aboard=false 이면 차주 하차(대시보드 '차주 하차' ON) 상태다.
-  void publishOwnerAboard(bool aboard) => _publish(
-        cmdTopic,
-        <String, dynamic>{'cmd': 'owner_aboard', 'value': aboard, 'ts': _nowSec},
-        retain: true,
-      );
+  /// §5.1 차주 하차 토글 → config.owner_away 명령(부분 갱신).
+  /// away=true(차주 하차, 대시보드 토글 ON) → owner_away=1(감시 시작/on).
+  /// away=false(차주 탑승, 토글 OFF)      → owner_away=0(해제/off).
+  static Map<String, dynamic> ownerAwayCommand(bool away) =>
+      <String, dynamic>{'type': 'config', 'owner_away': away ? 1 : 0};
 
-  /// SD 카드 백필 요청(sync 응답으로 수신).
+  /// 차주 하차 상태를 cmd 로 발행한다. retain 이라 브로커에 마지막 상태가 남아
+  /// 기기가 (재)접속하면 즉시 최신 owner_away 를 받는다.
+  void publishOwnerAway(bool away) {
+    _publish(cmdTopic, ownerAwayCommand(away),
+        retain: true, note: '차주 하차 ${away ? "ON" : "OFF"}');
+  }
+
+  /// SD 카드 백필 요청(§6 sync 응답으로 수신). 모든 명령은 type 필드를 갖는다(§5).
   void requestBackfill({DateTime? since}) => _publish(
         cmdTopic,
         <String, dynamic>{
-          'cmd': 'sync',
+          'type': 'sync',
           if (since != null) 'since': since.millisecondsSinceEpoch ~/ 1000,
         },
+        note: 'SD 백필 요청',
       );
 
-  /// 연결 확인용 핑.
-  void ping() =>
-      _publish(cmdTopic, <String, dynamic>{'cmd': 'ping', 'ts': _nowSec});
+  /// 연결 확인용 핑(POD 는 알 수 없는 type 을 무시하므로 브로커 왕복 확인용).
+  void ping() => _publish(
+        cmdTopic,
+        <String, dynamic>{'type': 'ping', 'ts': _nowSec},
+        note: '핑',
+      );
 
   @override
   void dispose() {

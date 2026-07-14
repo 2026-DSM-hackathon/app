@@ -23,13 +23,31 @@ Future<void> main() async {
   );
 }
 
-class HackApp extends StatelessWidget {
+class HackApp extends ConsumerStatefulWidget {
   const HackApp({super.key});
+
+  @override
+  ConsumerState<HackApp> createState() => _HackAppState();
+}
+
+class _HackAppState extends ConsumerState<HackApp> {
+  @override
+  void initState() {
+    super.initState();
+    // 앱 진입 즉시 OS 알림 권한을 요청한다(기기 자체 설정 팝업).
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      final bool granted =
+          await ref.read(notificationServiceProvider).requestPermission();
+      if (mounted) {
+        ref.read(notificationEnabledProvider.notifier).set(granted);
+      }
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: '공간 안전 모니터',
+      title: 'SAVIN',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.dark,
       home: const OnboardingScreen(),

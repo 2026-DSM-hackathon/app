@@ -722,30 +722,6 @@ class _AdditionalCard extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: <Widget>[
             _AdditionalTile(
-              icon: Icons.star,
-              label: '프리미엄 전환',
-              onTap: () => _showComingSoon(context),
-            ),
-            const Divider(
-              height: 1,
-              thickness: 1,
-              color: AppColors.divider,
-              indent: 16,
-              endIndent: 16,
-            ),
-            _AdditionalTile(
-              icon: Icons.shield,
-              label: '안전 정보',
-              onTap: () => _showComingSoon(context),
-            ),
-            const Divider(
-              height: 1,
-              thickness: 1,
-              color: AppColors.divider,
-              indent: 16,
-              endIndent: 16,
-            ),
-            _AdditionalTile(
               icon: Icons.settings,
               label: '설정',
               onTap: onSettingsTap,
@@ -753,12 +729,6 @@ class _AdditionalCard extends StatelessWidget {
           ],
         ),
       ),
-    );
-  }
-
-  void _showComingSoon(BuildContext context) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('준비 중')),
     );
   }
 }

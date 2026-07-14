@@ -625,7 +625,7 @@ class _DataSourceCard extends ConsumerWidget {
               onEdit: () => _editField(
                 context,
                 title: 'MQTT 브로커 호스트',
-                hint: '예: test.mosquitto.org',
+                hint: '예: broker.emqx.io',
                 initial: settings.mqttHost,
                 keyboardType: TextInputType.url,
                 onSave: notifier.setMqttHost,
@@ -656,7 +656,7 @@ class _DataSourceCard extends ConsumerWidget {
               onEdit: () => _editField(
                 context,
                 title: '기기 시리얼 넘버',
-                hint: '예: SAVEIN-0001',
+                hint: '예: SVN-EED364',
                 initial: settings.deviceSerial,
                 onSave: notifier.setDeviceSerial,
               ),
@@ -755,8 +755,8 @@ class _MqttStatusRow extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final MqttStatus status = ref.watch(mqttStatusProvider);
     final l = ref.watch(mqttLinkProvider).asData?.value;
-    final bool broker = l?.brokerConnected ?? false;
     final PodConnection pod = l?.pod ?? PodConnection.unknown;
     final String? error = l?.error;
 
@@ -766,9 +766,21 @@ class _MqttStatusRow extends ConsumerWidget {
         Row(
           children: <Widget>[
             StatusPill(
-              label: broker ? '브로커 연결됨' : '브로커 연결 중…',
-              color: broker ? AppColors.teal : AppColors.orange,
-              icon: broker ? Icons.cloud_done_outlined : Icons.cloud_sync_outlined,
+              label: switch (status) {
+                MqttStatus.connected => '브로커 연결됨',
+                MqttStatus.connecting => '브로커 연결 중…',
+                MqttStatus.idle => 'MQTT 연결 전',
+              },
+              color: switch (status) {
+                MqttStatus.connected => AppColors.teal,
+                MqttStatus.connecting => AppColors.orange,
+                MqttStatus.idle => AppColors.textTertiary,
+              },
+              icon: switch (status) {
+                MqttStatus.connected => Icons.cloud_done_outlined,
+                MqttStatus.connecting => Icons.cloud_sync_outlined,
+                MqttStatus.idle => Icons.cloud_off_outlined,
+              },
             ),
             const SizedBox(width: 8),
             StatusPill(

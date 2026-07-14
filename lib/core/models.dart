@@ -9,6 +9,8 @@ class SensorReading {
     required this.humidity,
     required this.co2,
     required this.motion,
+    this.occupancy = false,
+    this.distanceMm,
     this.heatstrokeRisk = 0,
   });
 
@@ -17,6 +19,8 @@ class SensorReading {
   final double humidity; // 상대습도 %
   final double co2; // CO2 농도 ppm
   final double motion; // 0.0 ~ 1.0 (움직임 강도)
+  final bool occupancy; // 재실(사람 감지) — POD telemetry occ(0/1). true=1존 이상 감지
+  final int? distanceMm; // 존0 초음파 거리 mm. null=측정 실패(POD dist=-1)
   final double heatstrokeRisk; // 0.0 ~ 1.0 열사병 확률(POD telemetry 로 수신)
 }
 

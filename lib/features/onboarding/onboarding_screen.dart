@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../app/app_shell.dart';
 import '../../app/responsive.dart';
 import '../../app/theme.dart';
+import '../../widgets/savin_logo.dart';
 import '../pairing/pairing_screen.dart';
 
 /// 온보딩 인트로(6.2). '시작하기' → 메인 셸, '기기 연결' → 페어링.
@@ -21,41 +22,15 @@ class OnboardingScreen extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: <Widget>[
                 const Spacer(),
-                Center(
-                  child: Container(
-                    width: 112,
-                    height: 112,
-                    decoration: BoxDecoration(
-                      color: AppColors.primary.withValues(alpha: 0.16),
-                      shape: BoxShape.circle,
-                    ),
-                    child: const Icon(Icons.shield_moon_rounded,
-                        color: AppColors.primary, size: 58),
-                  ),
-                ),
-                const SizedBox(height: 28),
+                // 브랜드 로고(assets/img.png — SAVIN 워드마크 + 금색 삼각형).
+                const Center(child: SavinLogo(height: 100)),
+                const SizedBox(height: 24),
                 const Text(
-                  '공간 안전 모니터',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                      fontSize: 28,
-                      fontWeight: FontWeight.w800,
-                      color: AppColors.textPrimary),
-                ),
-                const SizedBox(height: 12),
-                const Text(
-                  '레이더·열화상 센서로 차량/공간 내 탑승자를 감지하고,\n고온·장시간 방치를 실시간으로 알려드려요.',
+                  '차량/공간 내 탑승자를 감지해 장시간 방치로 인한\n열사병 및 사고를 방지합니다.',
                   textAlign: TextAlign.center,
                   style:
                       TextStyle(color: AppColors.textSecondary, fontSize: 14),
                 ),
-                const Spacer(),
-                const _Feature(
-                    icon: Icons.sensors_rounded, label: '실시간 탑승 감지'),
-                const _Feature(icon: Icons.thermostat_rounded, label: '고온 경고'),
-                const _Feature(
-                    icon: Icons.notifications_active_rounded,
-                    label: '즉시 알림 · 에스컬레이션'),
                 const Spacer(),
                 FilledButton(
                   style: FilledButton.styleFrom(
@@ -92,28 +67,6 @@ class OnboardingScreen extends StatelessWidget {
             ),
           ),
         ),
-      ),
-    );
-  }
-}
-
-class _Feature extends StatelessWidget {
-  const _Feature({required this.icon, required this.label});
-  final IconData icon;
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6),
-      child: Row(
-        children: <Widget>[
-          Icon(icon, color: AppColors.teal, size: 22),
-          const SizedBox(width: 14),
-          Text(label,
-              style: const TextStyle(
-                  color: AppColors.textPrimary, fontSize: 15)),
-        ],
       ),
     );
   }

@@ -1,6 +1,5 @@
 import 'dart:async';
 
-import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -12,12 +11,10 @@ import '../../core/models.dart';
 import '../../core/providers.dart';
 import '../../widgets/app_card.dart';
 import '../../widgets/ring_gauge.dart';
-import '../../widgets/section_header.dart';
 import '../../widgets/stat_card.dart';
 import '../../widgets/status_pill.dart';
-import '../../widgets/trend_chart.dart';
 
-/// 홈 대시보드(6.3, F-02/03). 센서→추론 결과를 실시간으로 표시한다.
+/// 홈 대시보드(6.3, F-02/03). 센서 값 + 열사병 확률을 실시간으로 표시한다.
 class HomeScreen extends ConsumerWidget {
   const HomeScreen({super.key});
 
@@ -30,7 +27,6 @@ class HomeScreen extends ConsumerWidget {
 
     final double risk = monitor.heatstroke; // 열사병 확률(0~1, 토픽 수신)
     final int pct = (risk * 100).round();
-    final bool occupied = monitor.occupied;
     final double temp = monitor.temperatureC;
     final double humidity = monitor.humidity;
     final double co2 = monitor.co2;
@@ -57,12 +53,6 @@ class HomeScreen extends ConsumerWidget {
         unit: 'ppm',
         icon: Icons.co2_rounded,
         accent: co2.airQuality.color,
-      ),
-      StatCard(
-        title: '차주 하차',
-        value: occupied ? '하차' : '대기',
-        icon: occupied ? Icons.directions_walk_rounded : Icons.chair_outlined,
-        accent: occupied ? AppColors.green : AppColors.textTertiary,
       ),
       StatCard(
         title: '열사병 확률',
@@ -92,7 +82,7 @@ class HomeScreen extends ConsumerWidget {
                 ref.read(monitorProvider.notifier).setOccupied(v),
           ),
           const SizedBox(height: 16),
-          // 기종 반응형: 넓은 화면은 한 줄, 좁은 화면은 2열(홀수면 마지막 칸 비움).
+          // 기종 반응형: 넓은 화면은 한 줄, 좁은 화면은 2열.
           LayoutBuilder(
             builder: (BuildContext context, BoxConstraints c) {
               if (c.maxWidth >= Breakpoints.wideStats) {
@@ -131,10 +121,6 @@ class HomeScreen extends ConsumerWidget {
               return Column(children: rows);
             },
           ),
-          const SizedBox(height: 22),
-          _TrendCard(monitor: monitor),
-          const SizedBox(height: 16),
-          _Co2TrendCard(monitor: monitor),
         ],
       ),
     );
@@ -254,8 +240,9 @@ class _PrimaryCard extends StatelessWidget {
             child: StatusPill(
               label: occupied ? '차주 하차' : '감지 대기',
               color: occupied ? AppColors.green : AppColors.textSecondary,
-              icon:
-                  occupied ? Icons.directions_walk_rounded : Icons.chair_outlined,
+              icon: occupied
+                  ? Icons.directions_walk_rounded
+                  : Icons.chair_outlined,
             ),
           ),
           const SizedBox(height: 18),
@@ -310,147 +297,6 @@ class _PrimaryCard extends StatelessWidget {
           ),
         ],
       ),
-    );
-  }
-}
-
-/// 온·습도 추이 카드.
-class _TrendCard extends StatelessWidget {
-  const _TrendCard({required this.monitor});
-  final MonitorState monitor;
-
-  @override
-  Widget build(BuildContext context) {
-    final List<SensorReading> sh = monitor.sensorHistory;
-    final List<FlSpot> tempSpots = <FlSpot>[
-      for (int i = 0; i < sh.length; i++) FlSpot(i.toDouble(), sh[i].temperatureC),
-    ];
-    final List<FlSpot> humSpots = <FlSpot>[
-      for (int i = 0; i < sh.length; i++) FlSpot(i.toDouble(), sh[i].humidity),
-    ];
-
-    return AppCard(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: <Widget>[
-          const SectionHeader(
-            title: '온·습도 추이',
-            trailing: StatusPill(label: '실시간', color: AppColors.teal),
-          ),
-          const SizedBox(height: 10),
-          Row(
-            children: const <Widget>[
-              _LegendDot(color: AppColors.teal, label: '온도 °C'),
-              SizedBox(width: 16),
-              _LegendDot(color: AppColors.blue, label: '습도 %'),
-            ],
-          ),
-          const SizedBox(height: 12),
-          if (tempSpots.length < 2)
-            const SizedBox(
-              height: 170,
-              child: Center(
-                child: Text('데이터 수집 중…',
-                    style: TextStyle(color: AppColors.textSecondary)),
-              ),
-            )
-          else
-            TrendChart(
-              series: <TrendSeries>[
-                TrendSeries(spots: tempSpots, color: AppColors.teal),
-                TrendSeries(spots: humSpots, color: AppColors.blue),
-              ],
-              minY: 0,
-              maxY: 100,
-              leftInterval: 25,
-            ),
-        ],
-      ),
-    );
-  }
-}
-
-/// CO2 추이 카드(전용 ppm 축). 온·습도와 스케일이 달라 별도 차트로 분리.
-class _Co2TrendCard extends StatelessWidget {
-  const _Co2TrendCard({required this.monitor});
-  final MonitorState monitor;
-
-  @override
-  Widget build(BuildContext context) {
-    final List<SensorReading> sh = monitor.sensorHistory;
-    final List<FlSpot> spots = <FlSpot>[
-      for (int i = 0; i < sh.length; i++) FlSpot(i.toDouble(), sh[i].co2),
-    ];
-    double peak = 0;
-    for (final FlSpot s in spots) {
-      if (s.y > peak) peak = s.y;
-    }
-    // y축 상단: 최소 1600, 그 이상이면 400 단위로 올림.
-    final double maxY = peak < 1600 ? 1600 : (peak / 400).ceil() * 400;
-    final AirQuality quality = monitor.co2.airQuality;
-    final Color color = quality.color;
-
-    return AppCard(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: <Widget>[
-          SectionHeader(
-            title: 'CO₂ 추이',
-            trailing: StatusPill(label: quality.label, color: color),
-          ),
-          const SizedBox(height: 10),
-          Row(
-            children: <Widget>[
-              _LegendDot(color: color, label: 'CO₂ ppm'),
-              const Spacer(),
-              Text(
-                '현재 ${monitor.co2.toStringAsFixed(0)} ppm',
-                style: TextStyle(
-                    color: color, fontSize: 13, fontWeight: FontWeight.w700),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          if (spots.length < 2)
-            const SizedBox(
-              height: 170,
-              child: Center(
-                child: Text('데이터 수집 중…',
-                    style: TextStyle(color: AppColors.textSecondary)),
-              ),
-            )
-          else
-            TrendChart(
-              series: <TrendSeries>[TrendSeries(spots: spots, color: color)],
-              minY: 400,
-              maxY: maxY,
-              leftInterval: 400,
-            ),
-        ],
-      ),
-    );
-  }
-}
-
-class _LegendDot extends StatelessWidget {
-  const _LegendDot({required this.color, required this.label});
-  final Color color;
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: <Widget>[
-        Container(
-          width: 10,
-          height: 10,
-          decoration: BoxDecoration(color: color, shape: BoxShape.circle),
-        ),
-        const SizedBox(width: 6),
-        Text(label,
-            style: const TextStyle(color: AppColors.textSecondary, fontSize: 12)),
-      ],
     );
   }
 }

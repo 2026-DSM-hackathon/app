@@ -6,7 +6,6 @@ import '../core/providers.dart';
 import '../features/alerts/alert_fullscreen.dart';
 import '../features/alerts/alerts_screen.dart';
 import '../features/home/home_screen.dart';
-import '../features/onboarding/onboarding_screen.dart';
 import '../features/pairing/pairing_screen.dart';
 import '../features/profile/profile_screen.dart';
 import '../features/settings/settings_screen.dart';
@@ -111,12 +110,8 @@ class _AppShellState extends ConsumerState<AppShell> {
                 const SizedBox(height: 8),
                 _sheetItem(ctx, Icons.sensors, '기기 연결(시리얼)',
                     () => _push(context, const PairingScreen())),
-                _sheetItem(ctx, Icons.warning_amber_rounded, '데모 경보 발생',
-                    () => ref.read(alertsProvider.notifier).triggerDemoCritical()),
                 _sheetItem(ctx, Icons.tune, '설정',
                     () => _push(context, const SettingsScreen())),
-                _sheetItem(ctx, Icons.slideshow_rounded, '온보딩 다시 보기',
-                    () => _push(context, const OnboardingScreen())),
               ],
             ),
           ),

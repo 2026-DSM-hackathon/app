@@ -488,7 +488,7 @@ class _AddContactDialogState extends State<_AddContactDialog> {
   }
 }
 
-/// 알림 카드: 권한 허용 토글 + 앱 종료 후 알림 테스트(열사병 로컬 알림).
+/// 알림 카드: 열사병 경보 로컬 알림 권한 허용 토글.
 class _NotificationCard extends ConsumerWidget {
   const _NotificationCard();
 
@@ -540,33 +540,6 @@ class _NotificationCard extends ConsumerWidget {
                 },
               ),
             ],
-          ),
-          const Divider(color: AppColors.divider, height: 24),
-          SizedBox(
-            width: double.infinity,
-            child: OutlinedButton.icon(
-              style: OutlinedButton.styleFrom(
-                foregroundColor: AppColors.red,
-                side: const BorderSide(color: AppColors.red),
-                padding: const EdgeInsets.symmetric(vertical: 12),
-              ),
-              onPressed: () async {
-                final ScaffoldMessengerState messenger =
-                    ScaffoldMessenger.of(context);
-                await ref
-                    .read(notificationServiceProvider)
-                    .scheduleDelayedCritical(
-                      title: '🚨 열사병 위험 경고',
-                      body: '차량 내 고온·탑승 감지 — 즉시 확인하세요',
-                      delay: const Duration(seconds: 15),
-                    );
-                messenger.showSnackBar(const SnackBar(
-                    content:
-                        Text('15초 뒤 알림이 도착합니다. 지금 앱을 종료해도 팝업이 떠요.')));
-              },
-              icon: const Icon(Icons.notifications_active_outlined, size: 18),
-              label: const Text('앱 종료 후 알림 테스트 (15초)'),
-            ),
           ),
         ],
       ),

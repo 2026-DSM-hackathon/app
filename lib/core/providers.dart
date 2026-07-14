@@ -86,7 +86,7 @@ class SettingsState {
     this.emergencyContacts = const <EmergencyContact>[
       EmergencyContact(name: '보호자', phone: '010-1234-5678'),
     ],
-    this.sensorSource = SensorDataSource.mock,
+    this.sensorSource = SensorDataSource.mqtt,
     this.espBaseUrl = 'http://192.168.0.10',
     this.mqttHost = 'test.mosquitto.org',
     this.mqttPort = 1883,
@@ -477,6 +477,16 @@ class MonitorNotifier extends Notifier<MonitorState> {
         mqttServiceProvider, (prev, next) => _bindMqtt(next));
     Future<void>.microtask(() {
       if (!_disposed) _bindMqtt(ref.read(mqttServiceProvider));
+    });
+
+    // 브로커 연결이 (재)수립되면 현재 차주 하차 여부를 cmd 로 즉시 발행해 POD 와
+    // 동기화한다(retain 이라 마지막 상태가 브로커에 유지됨). 앱이 하차 여부의 발행자다.
+    ref.listen<AsyncValue<MqttLink>>(mqttLinkProvider, (prev, next) {
+      final bool was = prev?.value?.brokerConnected ?? false;
+      final bool now = next.value?.brokerConnected ?? false;
+      if (!was && now && !_disposed) {
+        ref.read(mqttServiceProvider)?.publishOwnerAboard(!state.occupied);
+      }
     });
 
     ref.onDispose(() {
